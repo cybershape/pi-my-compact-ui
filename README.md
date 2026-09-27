@@ -10,6 +10,8 @@
 
 </div>
 
+Based on [pi-compact-ui](https://www.npmjs.com/package/pi-compact-ui) by [@geoffreychen777](https://www.npmjs.com/~geoffreychen777).
+
 ## Preview
 
 Every entry is listed in stream order, oldest first, one line each. The leading
