@@ -58,7 +58,7 @@ reasoning content:
 ## Installation
 
 ```bash
-pi install npm:pi-compact-ui
+pi install npm:pi-my-compact-ui
 ```
 
 Reload Pi:
@@ -70,7 +70,7 @@ Reload Pi:
 You can also load a local checkout temporarily:
 
 ```bash
-pi -e ./compact-ui/index.ts
+pi -e ./pi-my-compact-ui/index.ts
 ```
 
 ## Configuration
@@ -132,3 +132,7 @@ Its main responsibilities are:
 > compact-ui overrides the registration of several built-in tools so it can
 > control their presentation. Actual execution is still delegated to Pi's
 > native tool implementations.
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
