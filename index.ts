@@ -606,7 +606,7 @@ class ToolGroupComponent extends Container {
 
 	setExpanded(expanded: boolean): void {
 		this._expanded = expanded;
-		for (const tool of this.children) tool.setExpanded?.(expanded);
+		for (const tool of this.children as any[]) tool.setExpanded?.(expanded);
 		this.invalidate();
 	}
 
@@ -651,7 +651,7 @@ class ToolGroupComponent extends Container {
 		return this.hasPending() || this.hasActiveThinking();
 	}
 
-	invalidate(): void {
+	override invalidate(): void {
 		// Theme changes and tool/thinking updates must rebuild ANSI markdown.
 		this.markdownPreviewCache.clear();
 		super.invalidate();
@@ -866,7 +866,7 @@ class ToolGroupComponent extends Container {
 		return lines;
 	}
 
-	render(width: number): string[] {
+	override render(width: number): string[] {
 		const lines = this._expanded ? this.renderExpanded(width) : this.renderCollapsed(width);
 		// Indent compact blocks from the transcript edge while keeping every line
 		// within the terminal width (including mobile / narrow terminals).
@@ -1355,7 +1355,7 @@ function installGrouping(): void {
 			}
 			for (const child of [...(this.children ?? [])]) {
 				if (child instanceof ToolGroupComponent) {
-					for (const tool of [...child.children]) delete tool[PARENT_KEY];
+					for (const tool of [...child.children] as any[]) delete tool[PARENT_KEY];
 					groups.delete(child);
 				}
 				releaseAssistantAnchors(child);
@@ -1372,9 +1372,11 @@ function installGrouping(): void {
 // =============================================================================
 // Built-in tool delegation (render nothing natively)
 // =============================================================================
+// pi's built-in tools carry schema-inferred parameter and result types. compact-ui
+// only forwards the calls (rendering is replaced), so they stay opaque here.
 type AnyTool = {
-	parameters: unknown;
-	execute: (toolCallId: string, params: unknown, signal: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<unknown>;
+	parameters: any;
+	execute: (...args: any[]) => Promise<any>;
 };
 
 const toolCache = new Map<string, Record<string, AnyTool>>();
@@ -1401,7 +1403,13 @@ export default function (pi: ExtensionAPI) {
 	installCompactionSummaryRendering();
 
 	const delegate = (name: keyof ReturnType<typeof getTools>) =>
-		async (toolCallId: string, params: unknown, signal: AbortSignal, onUpdate?: unknown, ctx?: unknown) => {
+		async (
+			toolCallId: string,
+			params: unknown,
+			signal?: AbortSignal,
+			onUpdate?: unknown,
+			ctx?: unknown,
+		): Promise<any> => {
 			return getTools((ctx as { cwd: string }).cwd)[name].execute(toolCallId, params, signal, onUpdate);
 		};
 
