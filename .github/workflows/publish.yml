@@ -8,6 +8,10 @@ on:
       - "v*"
   workflow_dispatch:
 
+# Trusted publishing: npm exchanges the GitHub-issued OIDC token for a
+# short-lived publish token, so no long-lived NPM_TOKEN secret is used.
+# Requires a trusted publisher for this package on npmjs.com matching
+# repository "cybershape/pi-my-compact-ui" and workflow "publish.yml".
 permissions:
   contents: read
   id-token: write
@@ -17,12 +21,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
+          # Trusted publishing needs npm >= 11.5.1. Node 24 ships npm 11,
+          # while Node 22 only ships npm 10.x, so 24 is required here.
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
@@ -32,6 +38,6 @@ jobs:
         run: npm run check
 
       - name: Publish to npm
+        # npm also generates the provenance attestation automatically for
+        # trusted publishes; the flag is kept explicit on purpose.
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
