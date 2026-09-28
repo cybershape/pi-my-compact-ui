@@ -729,9 +729,6 @@ class ToolGroupComponent extends Container {
 		const prefix = rail ? fg("dim", rail) : "";
 		return `${prefix}${fg(this.colorFor(st), this.iconFor(tool, frame))} ${fg("toolTitle", bold(s.name))} ${fg("dim", s.content)} ${fg("muted", `(${toolElapsed(tool)}s)`)}`;
 	}
-	private thinkingActiveInGroup(): boolean {
-		return !this.sealed && this.hasActiveThinking();
-	}
 
 	// One row per thinking run. The spinner marks the run that is still streaming;
 	// the completion mark is written as soon as the run ends.
