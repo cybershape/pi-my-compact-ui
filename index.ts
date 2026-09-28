@@ -632,23 +632,38 @@ class ToolGroupComponent extends Container {
 		if ((tool as any)?.[PARENT_KEY] === this) delete (tool as any)[PARENT_KEY];
 	}
 
+	/** Return only entries that should be displayed (tools, or thinking with non-empty text). */
+	getVisibleEntries(): GroupEntry[] {
+		return this.entries.filter((entry) => {
+			if (entry.kind === "tool") return true;
+			if (entry.kind === "thinking") {
+				return entry.text.trim().length > 0;
+			}
+			return false;
+		});
+	}
+
+	hasVisibleEntries(): boolean {
+		return this.getVisibleEntries().length > 0;
+	}
+
 	hasPending(): boolean {
-		return this.children.some((tool) => toolStatus(tool) === "pending");
+		return this.getVisibleEntries().some((entry) => entry.kind === "tool" && toolStatus(entry.tool) === "pending");
 	}
 
 	/** True while a thinking run in this group is still streaming. */
 	hasActiveThinking(): boolean {
-		return this.entries.some((entry) => entry.kind === "thinking" && entry.active);
+		return this.getVisibleEntries().some((entry) => entry.kind === "thinking" && entry.active);
 	}
 
 	/** True once any thinking run has been added to this group. */
 	hasThinking(): boolean {
-		return this.entries.some((entry) => entry.kind === "thinking");
+		return this.getVisibleEntries().some((entry) => entry.kind === "thinking");
 	}
 
 	/** True while this group should keep its spinner animating. */
 	needsAnimation(): boolean {
-		return this.hasPending() || this.hasActiveThinking();
+		return this.hasVisibleEntries() && (this.hasPending() || this.hasActiveThinking());
 	}
 
 	override invalidate(): void {
@@ -711,7 +726,8 @@ class ToolGroupComponent extends Container {
 		const bold = theme?.bold ? theme.bold : (t: string) => t;
 		const st = toolStatus(tool);
 		const s = toolSummary(tool.toolName, tool.args);
-		return `${fg("dim", rail)}${fg(this.colorFor(st), this.iconFor(tool, frame))} ${fg("toolTitle", bold(s.name))} ${fg("dim", s.content)} ${fg("muted", `(${toolElapsed(tool)}s)`)}`;
+		const prefix = rail ? fg("dim", rail) : "";
+		return `${prefix}${fg(this.colorFor(st), this.iconFor(tool, frame))} ${fg("toolTitle", bold(s.name))} ${fg("dim", s.content)} ${fg("muted", `(${toolElapsed(tool)}s)`)}`;
 	}
 	private thinkingActiveInGroup(): boolean {
 		return !this.sealed && this.hasActiveThinking();
@@ -724,28 +740,37 @@ class ToolGroupComponent extends Container {
 		const fg = (color: string, text: string) => theme?.fg?.(color, text) ?? text;
 		const icon = entry.active ? frame : "✓";
 		const preview = entry.text.trim().replace(/[*_#`>]+/g, "");
+		const prefix = rail ? fg("dim", rail) : "";
 		if (!preview) {
-			return `${fg("dim", rail)}${fg("thinkingText", icon)} ${fg("thinkingText", "thinking...")}`;
+			const label = entry.active ? "thinking..." : "thinking";
+			return `${prefix}${fg("thinkingText", icon)} ${fg("thinkingText", label)}`;
 		}
 		const tokenLabel = thinkingTokenLabel(entry);
-		const previewLimit = Math.max(1, Math.min(60, width - GROUP_PADDING_X - 18 - tokenLabel.length));
-		return `${fg("dim", rail)}${fg("thinkingText", icon)} ${fg("thinkingText", `thinking: ${oneLine(preview, previewLimit)}`)} ${fg("muted", `· ${tokenLabel}`)}`;
+		const previewLimit = Math.max(1, Math.min(60, width - GROUP_PADDING_X - rail.length - 18 - tokenLabel.length));
+		return `${prefix}${fg("thinkingText", icon)} ${fg("thinkingText", `thinking: ${oneLine(preview, previewLimit)}`)} ${fg("muted", `· ${tokenLabel}`)}`;
 	}
 
 	// Folded: header + one line per entry, in stream order (oldest first).
-	private renderCollapsed(width: number): string[] {
+	// When there is only 1 visible entry, do not show hierarchy (no header, no tree rail).
+	private renderCollapsed(width: number, visible: GroupEntry[]): string[] {
 		const theme = currentTheme;
 		const fg = (color: string, text: string) => theme?.fg?.(color, text) ?? text;
 		const frame = SPINNER[Math.floor((Date.now() - spinnerStart) / SPINNER_MS) % SPINNER.length]!;
+
+		if (visible.length === 1) {
+			const entry = visible[0]!;
+			if (entry.kind === "tool") {
+				return [this.toolRow("", entry.tool, frame)];
+			}
+			return [this.thinkingRow("", entry, frame, width)];
+		}
+
 		const lines: string[] = [];
 
-		const hasPendingTool = this.hasPending();
-		const isThinking = this.thinkingActiveInGroup();
-		// An open block with no tools yet is still "thinking" (waiting for tools or
-		// a text seal); a sealed block without tools is a finished thinking-only
-		// block and must not claim "tools done".
-		const hasTools = this.children.length > 0;
-		const hasThinking = this.hasThinking();
+		const hasPendingTool = visible.some((e) => e.kind === "tool" && toolStatus(e.tool) === "pending");
+		const isThinking = !this.sealed && visible.some((e) => e.kind === "thinking" && e.active);
+		const hasTools = visible.some((e) => e.kind === "tool");
+		const hasThinking = visible.some((e) => e.kind === "thinking");
 		const openNoTools = !this.sealed && !hasTools;
 		const working = hasPendingTool || isThinking || openNoTools;
 		const state = hasPendingTool
@@ -765,9 +790,9 @@ class ToolGroupComponent extends Container {
 		lines.push(`${fg(stateColor, leftIcon)} ${fg(stateColor, state)}`);
 
 		// Every entry is shown, one line each, in the order the model produced it.
-		const total = this.entries.length;
+		const total = visible.length;
 		for (let index = 0; index < total; index++) {
-			const entry = this.entries[index]!;
+			const entry = visible[index]!;
 			const rail = index === total - 1 ? "└  " : "│  ";
 			lines.push(
 				entry.kind === "thinking"
@@ -776,23 +801,73 @@ class ToolGroupComponent extends Container {
 			);
 		}
 
-		if (this.needsAnimation()) scheduleAnimation();
 		return lines;
 	}
 
 	// Expanded: per-tool detail + every thinking run, in stream order.
-	private renderExpanded(width: number): string[] {
+	// When there is only 1 visible entry, do not show hierarchy (no header, no tree rail).
+	private renderExpanded(width: number, visible: GroupEntry[]): string[] {
 		const theme = currentTheme;
 		const fg = (color: string, text: string) => theme?.fg?.(color, text) ?? text;
 		const frame = SPINNER[Math.floor((Date.now() - spinnerStart) / SPINNER_MS) % SPINNER.length]!;
 		const lines: string[] = [];
 
-		const hasPendingTool = this.hasPending();
-		const isThinking = this.thinkingActiveInGroup();
+		if (visible.length === 1) {
+			const entry = visible[0]!;
+			const sub = "  ";
+			if (entry.kind === "tool") {
+				const tool = entry.tool;
+				lines.push(this.toolRow("", tool, frame));
+				const result = toolResultText(tool);
+				if (result) {
+					const markdownWidth = Math.max(1, width - GROUP_PADDING_X - sub.length);
+					const preview = this.renderMarkdownPreview(
+						`tool:${tool.toolCallId ?? 0}`,
+						result,
+						markdownWidth,
+						config.expandedToolLines,
+						{ color: (text) => currentTheme?.fg?.("toolOutput", text) ?? text },
+					);
+					for (const row of preview.lines) {
+						lines.push(`${fg("dim", sub)}${row}`);
+					}
+					if (preview.truncated) {
+						lines.push(`${fg("dim", sub)}${fg("muted", "…")}`);
+					}
+				}
+				return lines;
+			}
+
+			const icon = entry.active ? frame : "✓";
+			lines.push(
+				`${fg("thinkingText", icon)} ${fg("thinkingText", "thinking")} ${fg("muted", `· ${thinkingTokenLabel(entry)}`)}`,
+			);
+			const tText = entry.text.trim();
+			if (tText) {
+				const markdownWidth = Math.max(1, width - GROUP_PADDING_X - sub.length);
+				const preview = this.renderMarkdownPreview(
+					`thinking:${entry.id}`,
+					tText,
+					markdownWidth,
+					config.expandedThinkingLines,
+					{ color: (text) => currentTheme?.fg?.("thinkingText", text) ?? text, italic: true },
+				);
+				for (const row of preview.lines) {
+					lines.push(`${fg("dim", sub)}${row}`);
+				}
+				if (preview.truncated) {
+					lines.push(`${fg("dim", sub)}${fg("muted", "…")}`);
+				}
+			}
+			return lines;
+		}
+
+		const hasPendingTool = visible.some((e) => e.kind === "tool" && toolStatus(e.tool) === "pending");
+		const isThinking = !this.sealed && visible.some((e) => e.kind === "thinking" && e.active);
 		// See renderCollapsed: a block without tools keeps the thinking label, and a
 		// block with reasoning must not claim "tools done" alone.
-		const hasTools = this.children.length > 0;
-		const hasThinking = this.hasThinking();
+		const hasTools = visible.some((e) => e.kind === "tool");
+		const hasThinking = visible.some((e) => e.kind === "thinking");
 		const openNoTools = !this.sealed && !hasTools;
 		const working = hasPendingTool || isThinking || openNoTools;
 		const state = hasPendingTool
@@ -811,9 +886,9 @@ class ToolGroupComponent extends Container {
 		const leftIcon = working ? frame : "✓";
 		lines.push(`${fg(stateColor, leftIcon)} ${fg(stateColor, state)}`);
 
-		const total = this.entries.length;
+		const total = visible.length;
 		for (let index = 0; index < total; index++) {
-			const entry = this.entries[index]!;
+			const entry = visible[index]!;
 			const isLast = index === total - 1;
 			const rail = isLast ? "└─ " : "├─ ";
 			const sub = isLast ? "    " : "│   ";
@@ -862,12 +937,17 @@ class ToolGroupComponent extends Container {
 			}
 		}
 
-		if (this.needsAnimation()) scheduleAnimation();
 		return lines;
 	}
 
 	override render(width: number): string[] {
-		const lines = this._expanded ? this.renderExpanded(width) : this.renderCollapsed(width);
+		const visible = this.getVisibleEntries();
+		if (visible.length === 0) return [];
+
+		if (this.needsAnimation()) scheduleAnimation();
+
+		const lines = this._expanded ? this.renderExpanded(width, visible) : this.renderCollapsed(width, visible);
+		if (lines.length === 0) return [];
 		// Indent compact blocks from the transcript edge while keeping every line
 		// within the terminal width (including mobile / narrow terminals).
 		const padding = " ".repeat(Math.min(GROUP_PADDING_X, Math.max(0, width - 1)));
@@ -966,8 +1046,13 @@ function flushPendingTextSeal(): void {
 		// visible text. Anchor it immediately before this text block so the visual
 		// component order matches the stream order:
 		//   group -> visible text -> next group -> next visible text
-		if (pendingTextOrdinal !== null) {
-			anchorGroupBeforeCurrentText(lastActiveGroup, pendingTextOrdinal);
+		if (lastActiveGroup.hasVisibleEntries()) {
+			if (pendingTextOrdinal !== null) {
+				anchorGroupBeforeCurrentText(lastActiveGroup, pendingTextOrdinal);
+			}
+		} else {
+			if (lastChatContainer) removeGroupFromContainer(lastChatContainer, lastActiveGroup);
+			groups.delete(lastActiveGroup);
 		}
 		lastActiveGroup.sealed = true;
 		finalizeActiveThinking();
@@ -1139,7 +1224,7 @@ function insertTurnDivider(elapsedMs: number): void {
 	// group). A plain text-only answer gets no divider.
 	const hasPriorContent = contentContainer.children
 		.slice(0, finalIndex)
-		.some((child) => child instanceof ToolGroupComponent);
+		.some((child) => child instanceof ToolGroupComponent && child.hasVisibleEntries());
 	if (!hasPriorContent) return;
 
 	const state = getAssistantContentState(contentContainer);
@@ -1183,6 +1268,7 @@ function placeAnchoredGroupBeforeText(container: Container, target: Markdown, gr
 }
 
 function insertAnchoredGroup(container: Container, ordinal: number, group: ToolGroupComponent): void {
+	if (!group.hasVisibleEntries()) return;
 	const markdowns = container.children.filter(isVisibleTextMarkdown);
 	const target = markdowns[ordinal];
 	if (!target) return;
@@ -1220,6 +1306,11 @@ function anchorGroupBeforeCurrentText(group: ToolGroupComponent, ordinal: number
 		removeGroupFromContainer(previousAnchor.container, group);
 	}
 
+	if (!group.hasVisibleEntries()) {
+		groups.delete(group);
+		return;
+	}
+
 	const state = getAssistantContentState(contentContainer);
 	const replaced = state.anchors.get(ordinal);
 	if (replaced && replaced !== group) {
@@ -1240,7 +1331,7 @@ function restoreAssistantAnchor(parent: any, component: any): void {
 	const state = getAssistantContentState(parent);
 	const ordinal = state.nextTextOrdinal++;
 	const group = state.anchors.get(ordinal);
-	if (group) {
+	if (group && group.hasVisibleEntries()) {
 		removeGroupFromContainer(parent, group);
 		placeAnchoredGroupBeforeText(parent, component, group);
 	}
@@ -1464,6 +1555,12 @@ export default function (pi: ExtensionAPI) {
 			lastActiveGroup.invalidate();
 		}
 		if (role === "user") {
+			for (const g of [...groups]) {
+				if (!g.hasVisibleEntries()) {
+					if (lastChatContainer) removeGroupFromContainer(lastChatContainer, g);
+					groups.delete(g);
+				}
+			}
 			turnStartMs = Date.now();
 			activeThinking = null;
 			activeThinkingIndex = null;
@@ -1566,6 +1663,12 @@ export default function (pi: ExtensionAPI) {
 			lastActiveGroup.sealed = true;
 			finalizeActiveThinking();
 			lastActiveGroup.invalidate();
+		}
+		for (const g of [...groups]) {
+			if (!g.hasVisibleEntries()) {
+				if (lastChatContainer) removeGroupFromContainer(lastChatContainer, g);
+				groups.delete(g);
+			}
 		}
 		refreshSealedThinkingTokens();
 		// Separate the final visible text from the preceding work with a divider
