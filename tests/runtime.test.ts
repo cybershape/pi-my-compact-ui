@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { Container, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, visibleWidth, stripTerminalSequences } from "@earendil-works/pi-tui";
 import { createRuntimeState, runtime } from "../src/state.js";
 import { ToolGroupComponent } from "../src/tool-group.js";
 import { createThinkingEntry, finalizeActiveThinking, refreshSealedThinkingTokens, updateActiveThinkingTokens } from "../src/thinking.js";
@@ -105,11 +105,13 @@ test("折叠和展开渲染遵守宽度、单条目无树头，预览受配置�
 	assert.ok(rows.indexOf("bash") < rows.indexOf("after tool"));
 });
 
-test("思考超长时使用 '... ' 截断并保留尾部空格", () => {
+test("思考超长时使用 '...' 截断，与右侧信息之间保持单个空格", () => {
 	const group = new ToolGroupComponent();
 	group.addThinking(thinking("We are analyzing the code thoroughly to find the best way to solve this issue."));
 	const rendered = group.render(60).join("\n");
-	assert.ok(rendered.includes("... "));
+	const plain = stripTerminalSequences(rendered);
+	assert.ok(plain.includes("... ("));
+	assert.ok(!plain.includes("...  ("));
 	assert.ok(!rendered.includes("…"));
 });
 

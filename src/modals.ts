@@ -480,7 +480,7 @@ export class InspectSelectorModal implements Component {
 				}
 
 				const maxLeft = Math.max(1, innerWidth - visibleWidth(rightStr) - 1);
-				const ellipsis = entry.kind === "thinking" ? "... " : "…";
+				const ellipsis = entry.kind === "thinking" ? "..." : "…";
 				const leftTrunc = truncateToWidth(leftContent, maxLeft, ellipsis);
 				const gap = Math.max(1, innerWidth - visibleWidth(leftTrunc) - visibleWidth(rightStr));
 				let rowLine = `${leftTrunc}${" ".repeat(gap)}${rightStr}`;

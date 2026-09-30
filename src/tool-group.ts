@@ -211,7 +211,7 @@ export class ToolGroupComponent extends Container {
 		if (preview) {
 			const maxPreviewLen = width - headerLen - 1 - rightLen - 1;
 			if (maxPreviewLen > 3) {
-				const truncated = truncateToWidth(preview.replace(/\s+/g, " "), maxPreviewLen, "... ");
+				const truncated = truncateToWidth(preview.replace(/\s+/g, " "), maxPreviewLen, "...");
 				const contentColor = isDim ? "dim" : "thinkingText";
 				const left = `${leftHeader} ${fg(contentColor, truncated)}`;
 				const gap = Math.max(1, width - visibleWidth(left) - rightLen);
