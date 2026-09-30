@@ -169,7 +169,10 @@ const PATCH_KEY = Symbol.for("compact-ui.group-patch");
 const MARKDOWN_RENDER_PATCH_KEY = Symbol.for("compact-ui.markdown-render-patch");
 const COMPACTION_STYLE_PATCH_KEY = Symbol.for("compact-ui.compaction-style-patch");
 const ASSISTANT_THINKING_PATCH_KEY = Symbol.for("compact-ui.assistant-thinking-patch");
+const ASSISTANT_REBUILDING = Symbol.for("compact-ui.assistant-rebuilding");
 const IS_STREAMING_COMP = Symbol.for("compact-ui.is-streaming-comp");
+const GROUP_MOUNT = Symbol.for("compact-ui.group-mount");
+const TOOL_RENDER_PATCH_KEY = Symbol.for("compact-ui.tool-render-patch");
 
 function isContainer(val: any): val is Container {
 	return Boolean(
@@ -210,6 +213,20 @@ function isText(val: any): val is Text {
 
 function isToolGroup(val: any): val is ToolGroupComponent {
 	return Boolean(val && (val instanceof ToolGroupComponent || val.constructor?.name === "ToolGroupComponent"));
+}
+
+// A grouped tool already has a tree row. If that same component is still reachable
+// from another parent, its native card would paint the call a second time.
+function hideGroupedToolRender(tool: any): void {
+	const prototype = tool ? Object.getPrototypeOf(tool) : undefined;
+	if (!prototype || typeof prototype.render !== "function" || prototype[TOOL_RENDER_PATCH_KEY]) return;
+	const original = prototype.render as (this: any, width: number) => string[];
+	const installed = function (this: any, width: number): string[] {
+		if (this?.[PARENT_KEY]) return [];
+		return original.call(this, width);
+	};
+	prototype.render = installed;
+	prototype[TOOL_RENDER_PATCH_KEY] = { original, installed };
 }
 
 // -----------------------------------------------------------------------------
@@ -622,6 +639,7 @@ class ToolGroupComponent extends Container {
 	}
 
 	addTool(tool: any): void {
+		hideGroupedToolRender(tool);
 		this.children.push(tool);
 		if ((tool as any)._groupedAt === undefined) (tool as any)._groupedAt = Date.now();
 		(tool as any)[PARENT_KEY] = this;
@@ -1652,7 +1670,9 @@ function ensureThinkingGroup(): void {
 		if (!Array.isArray(children)) return;
 		const idx = children.indexOf(lastStreamingComp);
 		group = new ToolGroupComponent();
+		detachGroup(group);
 		children.splice(idx >= 0 ? idx + 1 : children.length, 0, group);
+		noteGroupMount(parent, group);
 		groups.add(group);
 		lastActiveGroup = group;
 		parent.invalidate?.();
@@ -1721,6 +1741,7 @@ function maybeGroup(parent: any, component: any): void {
 		group.addTool(component);
 		(parent as any).children[prior.index] = group;
 		children.splice(index, 1);
+		noteGroupMount(parent, group);
 		groups.add(group);
 		lastActiveGroup = group;
 		return;
@@ -1730,6 +1751,7 @@ function maybeGroup(parent: any, component: any): void {
 	const group = new ToolGroupComponent();
 	group.addTool(component);
 	(parent as any).children[index] = group;
+	noteGroupMount(parent, group);
 	groups.add(group);
 	lastActiveGroup = group;
 }
@@ -1760,6 +1782,48 @@ type AssistantContentState = {
 const assistantContentStates = new WeakMap<Container, AssistantContentState>();
 const groupAnchors = new WeakMap<ToolGroupComponent, { container: Container; ordinal: number }>();
 
+function thinkingAlreadyShown(text: string): boolean {
+	const norm = text.trim();
+	if (!norm) return true;
+	for (const group of groups) {
+		for (const entry of group.entries) {
+			if (entry.kind === "thinking" && entry.text.trim() === norm) return true;
+		}
+	}
+	return false;
+}
+
+function stageHistoricalThinking(
+	state: AssistantContentState,
+	ordinal: number,
+	texts: string[],
+	message: any,
+): void {
+	if (state.anchors.has(ordinal)) return;
+	const fresh = texts.filter((text, index) => text.trim() && texts.indexOf(text) === index && !thinkingAlreadyShown(text));
+	if (fresh.length === 0) return;
+	const group = new ToolGroupComponent();
+	group.anchored = true;
+	group.sealed = true;
+	const reasoningTokens = Number(message?.usage?.reasoning);
+	const tokensExact = Number.isFinite(reasoningTokens) && reasoningTokens > 0;
+	for (const text of fresh) {
+		const entry: ThinkingEntry = {
+			kind: "thinking",
+			id: thinkingEntrySeq++,
+			text,
+			tokens: tokensExact ? reasoningTokens : estimateTextTokens(text),
+			tokensExact,
+			active: false,
+			owner: group,
+		};
+		group.entries.push(entry);
+	}
+	if (!group.hasVisibleEntries()) return;
+	state.anchors.set(ordinal, group);
+	groups.add(group);
+}
+
 function ensureHistoricalThinkingAnchors(
 	contentContainer: Container,
 	message: any,
@@ -1776,61 +1840,13 @@ function ensureHistoricalThinkingAnchors(
 			const text = String(item.thinking ?? "").trim();
 			if (text) currentThinkingBlocks.push(text);
 		} else if (item?.type === "text" && String(item.text ?? "").trim()) {
-			if (currentThinkingBlocks.length > 0 && !state.anchors.has(textOrdinal)) {
-				const group = new ToolGroupComponent();
-				group.anchored = true;
-				group.sealed = true;
-				const reasoningTokens = Number(message?.usage?.reasoning);
-				for (const text of currentThinkingBlocks) {
-					const entry: ThinkingEntry = {
-						kind: "thinking",
-						id: thinkingEntrySeq++,
-						text,
-						tokens:
-							Number.isFinite(reasoningTokens) && reasoningTokens > 0
-								? reasoningTokens
-								: estimateTextTokens(text),
-						tokensExact: Number.isFinite(reasoningTokens) && reasoningTokens > 0,
-						active: false,
-						owner: group,
-					};
-					group.entries.push(entry);
-				}
-				if (group.hasVisibleEntries()) {
-					state.anchors.set(textOrdinal, group);
-					groups.add(group);
-				}
-				currentThinkingBlocks = [];
-			}
+			stageHistoricalThinking(state, textOrdinal, currentThinkingBlocks, message);
+			currentThinkingBlocks = [];
 			textOrdinal++;
 		}
 	}
 
-	if (currentThinkingBlocks.length > 0 && !state.anchors.has(textOrdinal)) {
-		const group = new ToolGroupComponent();
-		group.anchored = true;
-		group.sealed = true;
-		const reasoningTokens = Number(message?.usage?.reasoning);
-		for (const text of currentThinkingBlocks) {
-			const entry: ThinkingEntry = {
-				kind: "thinking",
-				id: thinkingEntrySeq++,
-				text,
-				tokens:
-					Number.isFinite(reasoningTokens) && reasoningTokens > 0
-						? reasoningTokens
-						: estimateTextTokens(text),
-				tokensExact: Number.isFinite(reasoningTokens) && reasoningTokens > 0,
-				active: false,
-				owner: group,
-			};
-			group.entries.push(entry);
-		}
-		if (group.hasVisibleEntries()) {
-			state.anchors.set(textOrdinal, group);
-			groups.add(group);
-		}
-	}
+	stageHistoricalThinking(state, textOrdinal, currentThinkingBlocks, message);
 }
 
 /**
@@ -1843,8 +1859,8 @@ function ensureHistoricalThinkingAnchors(
  * AssistantMessageComponent. For historical/non-streaming messages, ensureHistoricalThinkingAnchors
  * rebuilds the compact thinking groups and anchors them before the matching visible text.
  */
-function installNativeThinkingSuppression(): void {
-	const prototype = AssistantMessageComponent.prototype as any;
+function installNativeThinkingSuppression(prototype: any = AssistantMessageComponent.prototype): void {
+	if (!prototype || typeof prototype.updateContent !== "function") return;
 	const previous = prototype[ASSISTANT_THINKING_PATCH_KEY] as
 		| {
 				originalUpdateContent: (this: any, message: any, isStreaming?: boolean) => void;
@@ -1885,17 +1901,36 @@ function installNativeThinkingSuppression(): void {
 			const state = getAssistantContentState(contentContainer);
 			const group = state.anchors.get(0);
 			if (group && group.hasVisibleEntries() && !contentContainer.children.includes(group)) {
+				detachGroup(group, contentContainer);
 				contentContainer.addChild(new Spacer(1));
 				contentContainer.addChild(group);
 				contentContainer.addChild(new Spacer(1));
+				noteGroupMount(contentContainer, group);
 			}
 		}
 	};
 	prototype.updateContent = installedUpdateContent;
+	if (typeof prototype.setHideThinkingBlock === "function" && !prototype[ASSISTANT_THINKING_PATCH_KEY]) {
+		const originalSetHideThinkingBlock = prototype.setHideThinkingBlock as (this: any, hide: boolean) => void;
+		prototype.setHideThinkingBlock = function (this: any, _hide: boolean): void {
+			// Thinking stays in the compact tree. Letting Pi show it again paints a second copy.
+			this.hiddenThinkingLabel = "";
+			originalSetHideThinkingBlock.call(this, true);
+		};
+	}
 	prototype[ASSISTANT_THINKING_PATCH_KEY] = {
 		originalUpdateContent,
 		installedUpdateContent,
 	};
+}
+
+function ensureAssistantThinkingPatched(component: any): boolean {
+	const prototype = Object.getPrototypeOf(component);
+	const already = Boolean(prototype?.[ASSISTANT_THINKING_PATCH_KEY]);
+	installNativeThinkingSuppression(prototype);
+	component.hideThinkingBlock = true;
+	component.hiddenThinkingLabel = "";
+	return already;
 }
 
 function getAssistantContentState(container: Container): AssistantContentState {
@@ -1912,6 +1947,21 @@ function removeGroupFromContainer(container: any, group: ToolGroupComponent): vo
 	if (!Array.isArray(children)) return;
 	const index = children.indexOf(group);
 	if (index >= 0) children.splice(index, 1);
+	if ((group as any)[GROUP_MOUNT] === container) delete (group as any)[GROUP_MOUNT];
+}
+
+function noteGroupMount(container: any, group: ToolGroupComponent): void {
+	(group as any)[GROUP_MOUNT] = container;
+}
+
+// One group object must occupy one parent. Leaving it in the chat container and
+// also splicing it into an assistant message renders the same block twice.
+function detachGroup(group: ToolGroupComponent, keep?: any): void {
+	const mounted = (group as any)[GROUP_MOUNT];
+	if (mounted && mounted !== keep) removeGroupFromContainer(mounted, group);
+	if (lastChatContainer && lastChatContainer !== keep) removeGroupFromContainer(lastChatContainer, group);
+	const anchor = groupAnchors.get(group);
+	if (anchor?.container && anchor.container !== keep) removeGroupFromContainer(anchor.container, group);
 }
 
 function removeComponentFromContainer(container: any, component: any): void {
@@ -2015,6 +2065,7 @@ function isVisibleTextMarkdown(component: any): component is Markdown {
 }
 
 function placeAnchoredGroupBeforeText(container: Container, target: Markdown, group: ToolGroupComponent): void {
+	detachGroup(group, container);
 	const targetIndex = container.children.indexOf(target);
 	if (targetIndex < 0) return;
 
@@ -2034,6 +2085,7 @@ function placeAnchoredGroupBeforeText(container: Container, target: Markdown, gr
 	}
 	group.anchored = true;
 	container.children.splice(spacerStart, 0, new Spacer(1), group, new Spacer(1));
+	noteGroupMount(container, group);
 }
 
 function insertAnchoredGroup(container: Container, ordinal: number, group: ToolGroupComponent): void {
@@ -2135,20 +2187,25 @@ function stripAssistantPhantomPadding(parent: any, component: any): void {
 		return;
 	}
 	if (!assistantContentContainers.has(parent)) return;
-	// Drop any Text child whose visible content is empty (only ANSI styling).
-	// This is the hidden-thinking label pi renders even when the label is "".
-	// Also remove the trailing Spacer run that preceded the label. Otherwise
-	// every thinking-only assistant message in a multi-tool loop remains as a
-	// one-line blank component; moving the final group into a later text message
-	// then exposes all of those accumulated blank lines as a huge gap.
-	if (isText(component)) {
-		const visible = String((component as any).text ?? "").replace(/\x1b\[[0-9;]*m/g, "").trim();
-		if (visible === "") {
-			const index = parent.children.indexOf(component);
-			if (index >= 0) parent.children.splice(index, 1);
-			while (isSpacer(parent.children.at(-1))) parent.children.pop();
-		}
+	// Pi still builds a native thinking widget (full Markdown, or the hidden
+	// "Thinking..." label) beside the compact tree. Drop that widget so the run
+	// is visible only inside the tree.
+	if (!isNativeThinkingWidget(component)) return;
+	const index = parent.children.indexOf(component);
+	if (index >= 0) parent.children.splice(index, 1);
+	if (isSpacer(parent.children[index])) parent.children.splice(index, 1);
+	while (parent.children.length > 0 && parent.children.every((child: any) => isSpacer(child))) parent.children.pop();
+}
+
+function isNativeThinkingWidget(component: any): boolean {
+	if (!component || isToolGroup(component)) return false;
+	if (component.constructor?.name === "MouseRegion" && component.child) {
+		return isNativeThinkingWidget(component.child);
 	}
+	if (isMarkdown(component) && (component as any).defaultTextStyle) return true;
+	if (!isText(component)) return false;
+	const visible = String((component as any).text ?? "").replace(/\x1b\[[0-9;]*m/g, "").trim();
+	return visible === "" || visible === "Thinking..." || visible === "thinking" || visible === "thinking...";
 }
 
 function installGrouping(): void {
@@ -2183,9 +2240,27 @@ function installGrouping(): void {
 					// Remember where the current assistant message component lives so a
 					// thinking-only group can be inserted right after it later.
 					if (isAssistantMessage(component)) {
+						const assistant = component as any;
+						const alreadyPatched = ensureAssistantThinkingPatched(assistant);
+						const streaming = assistant.isStreaming === true;
+						// Historical messages are constructed before they join the chat. If
+						// that first paint used Pi's unpatched renderer, rebuild once so the
+						// native thinking block is dropped and the compact anchor is created.
+						if (!alreadyPatched && !streaming && assistant.lastMessage && !assistant[ASSISTANT_REBUILDING]) {
+							assistant[ASSISTANT_REBUILDING] = true;
+							const previousStream = lastStreamingComp;
+							if (previousStream === assistant) lastStreamingComp = null;
+							assistant[IS_STREAMING_COMP] = false;
+							try {
+								assistant.updateContent(assistant.lastMessage, false);
+							} finally {
+								delete assistant[ASSISTANT_REBUILDING];
+								if (lastStreamingComp === null) lastStreamingComp = previousStream;
+							}
+						}
 						lastChatContainer = this;
-						lastStreamingComp = component;
-						(component as any)[IS_STREAMING_COMP] = true;
+						lastStreamingComp = assistant;
+						assistant[IS_STREAMING_COMP] = streaming;
 						// A run that started before its message component existed can now
 						// be placed in the transcript, in front of this message's text.
 						if (unattachedThinking.length > 0) ensureThinkingGroup();
