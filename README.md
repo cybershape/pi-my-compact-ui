@@ -136,6 +136,33 @@ Its main responsibilities are:
 > control their presentation. Actual execution is still delegated to Pi's
 > native tool implementations.
 
+## 开发与测试
+
+公开入口仍为 `index.ts`，实现按职责拆分在 `src/`：
+
+| 模块 | 职责 |
+|---|---|
+| `config.ts` / `settings.ts` | 配置读写与交互式设置；读写器可注入，测试不写入用户配置 |
+| `helpers.ts` / `types.ts` / `constants.ts` | 格式化、流式参数解析、共享类型和常量 |
+| `state.ts` | 集中管理运行状态；`createRuntimeState()` 创建独立状态快照 |
+| `thinking.ts` / `streaming-tools.ts` | 思考生命周期、工具占位行和执行时间 |
+| `tool-group.ts` / `markdown.ts` / `compaction.ts` / `modals.ts` | 分组、代码块、压缩摘要与弹窗渲染 |
+| `guards.ts` / `grouping.ts` / `assistant-patches.ts` | 组件识别、分组、正文锚点与 Pi 原生组件适配 |
+| `animation.ts` / `extension.ts` | 动画调度、命令与事件接入 |
+
+```bash
+npm run typecheck  # 严格 TypeScript 检查，包含源码和测试
+npm test           # 编译到 .test-build/，使用 Node 内置测试框架
+npm run check      # 类型检查 + 全部测试，CI 和发布前自动执行
+```
+
+测试位于 `tests/`，覆盖纯逻辑、配置与数值编辑器、ANSI/中文代码块、
+分组与弹窗、流式事件顺序、正文封组、历史锚点、热重载，以及 Pi 实际
+TypeScript 扩展加载器。测试无需新增依赖；`.test-build/` 不进入版本控制或发布包。
+
+涉及真实终端的改动还需手动验证：通过 `pi -e ./index.ts` 加载，检查流式
+思考与并行工具、正文切换、`Ctrl+O` 展开、`Ctrl+I` 弹窗、设置保存和 `/reload`。
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
