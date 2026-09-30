@@ -19,7 +19,7 @@ glyph is a spinner while the entry is still streaming:
 
 ```text
 ⠋ tool calling...
-│  ✓ thinking The parser test is failing… · 1.2K tok
+│  ✓ thinking The parser test is failing… (1.2k)
 │  ✓ bash: npm test (3.2s)
 └  ⠋ thinking The assertion is off by one…
 ```
@@ -29,7 +29,7 @@ reasoning content:
 
 ```text
 ✓ tools done
-├─ ✓ thinking · 1.2K tok
+├─ ✓ thinking (1.2k)
 │   The validation path now handles expired sessions…
 ├─ ✓ read: src/auth.ts (0.1s)
 │   export async function authenticate() { …

@@ -11,7 +11,7 @@
  *   ⠋ tool calling...
  *   │  ⠋ thinking Planning the fix...
  *   │  ✓ bash: ls /tmp && cat fi... (3s)
- *   └  ✓ thinking The cache is stale · 1.2K tok
+ *   └  ✓ thinking The cache is stale (1.2k)
  *
  * Ctrl+O toggles collapse/expand (via setExpanded, same as built-in tools).
  * Expand line counts are configurable via /compact-ui-config (interactive
@@ -169,10 +169,10 @@ const PATCH_KEY = Symbol.for("compact-ui.group-patch");
 const MARKDOWN_RENDER_PATCH_KEY = Symbol.for("compact-ui.markdown-render-patch");
 const COMPACTION_STYLE_PATCH_KEY = Symbol.for("compact-ui.compaction-style-patch");
 const ASSISTANT_THINKING_PATCH_KEY = Symbol.for("compact-ui.assistant-thinking-patch");
-const ASSISTANT_REBUILDING = Symbol.for("compact-ui.assistant-rebuilding");
 const IS_STREAMING_COMP = Symbol.for("compact-ui.is-streaming-comp");
 const GROUP_MOUNT = Symbol.for("compact-ui.group-mount");
 const TOOL_RENDER_PATCH_KEY = Symbol.for("compact-ui.tool-render-patch");
+const LIVE_ASSISTANT_KEY = Symbol.for("compact-ui.live-assistant");
 
 function isContainer(val: any): val is Container {
 	return Boolean(
@@ -329,7 +329,13 @@ function updateActiveThinkingTokens(message: any): void {
 }
 
 function thinkingTokenLabel(entry: ThinkingEntry): string {
-	return `${entry.tokensExact ? "" : "≈"}${formatTokenK(entry.tokens)} tok`;
+	const tokens = Math.max(0, Math.round(Number(entry?.tokens) || 0));
+	if (tokens < 1000) {
+		return `(${tokens}t)`;
+	}
+	const k = tokens / 1000;
+	const formatted = k < 100 ? k.toFixed(1) : Math.round(k).toString();
+	return `(${formatted}k)`;
 }
 
 function createThinkingEntry(): ThinkingEntry {
@@ -797,7 +803,7 @@ class ToolGroupComponent extends Container {
 
 		const leftHeader = `${prefix}${fg("thinkingText", icon)} ${fg("toolTitle", "thinking")}`;
 		const tokenLabel = thinkingTokenLabel(entry);
-		const right = fg("muted", `· ${tokenLabel}`);
+		const right = fg("muted", tokenLabel);
 		const rightLen = visibleWidth(right);
 		const headerLen = visibleWidth(leftHeader);
 
@@ -1145,7 +1151,7 @@ class DetailModalComponent implements Component {
 		if (this.entry.kind === "thinking") {
 			const icon = this.entry.active ? frame : "✓";
 			const tokenStr = thinkingTokenLabel(this.entry);
-			title = `${fg("thinkingText", icon)} ${fg("toolTitle", "Thinking")} ${fg("muted", `· ${tokenStr}`)}`;
+			title = `${fg("thinkingText", icon)} ${fg("toolTitle", "Thinking")} ${fg("muted", tokenStr)}`;
 
 			const rawText = this.entry.text.trim();
 			if (!rawText) {
@@ -1503,7 +1509,7 @@ class InspectSelectorModal implements Component {
 					const thinkingLabel = fg("toolTitle", "thinking");
 					const contentText = fg("thinkingText", tText || "(思考中...)");
 					leftContent = `${prefix}${fg("thinkingText", icon)} ${thinkingLabel} ${contentText}`;
-					rightStr = fg("muted", `· ${tokenLabel}`);
+					rightStr = fg("muted", tokenLabel);
 				}
 
 				const maxLeft = Math.max(1, innerWidth - visibleWidth(rightStr) - 1);
@@ -1719,6 +1725,45 @@ function flushPendingTextSeal(): void {
 	pendingTextOrdinal = null;
 }
 
+function getPrecedingAssistantThinking(children: any[], beforeIndex: number): string[] {
+	for (let i = beforeIndex; i >= 0; i--) {
+		const child = children[i];
+		if (isSpacer(child)) continue;
+		if (isAssistantMessage(child)) {
+			const content = (child as any).lastMessage?.content;
+			if (!Array.isArray(content)) return [];
+			const texts: string[] = [];
+			for (const item of content) {
+				if (item?.type === "thinking") {
+					const t = String(item.thinking ?? "").trim();
+					if (t && !thinkingAlreadyShown(t)) texts.push(t);
+				}
+			}
+			return texts;
+		}
+		break;
+	}
+	return [];
+}
+
+function attachPrecedingThinkingToGroup(group: ToolGroupComponent, children: any[], beforeIndex: number): void {
+	const texts = getPrecedingAssistantThinking(children, beforeIndex);
+	if (texts.length === 0) return;
+	for (const text of texts) {
+		if (thinkingAlreadyShown(text)) continue;
+		const entry: ThinkingEntry = {
+			kind: "thinking",
+			id: thinkingEntrySeq++,
+			text,
+			tokens: estimateTextTokens(text),
+			tokensExact: false,
+			active: false,
+			owner: group,
+		};
+		group.entries.push(entry);
+	}
+}
+
 function maybeGroup(parent: any, component: any): void {
 	if (!isGroupable(component) || isToolGroup(parent)) return;
 	const children = parent?.children;
@@ -1729,6 +1774,7 @@ function maybeGroup(parent: any, component: any): void {
 
 	// Previous sibling is an open (not-yet-sealed) group → join it.
 	if (isToolGroup(prior?.child) && !prior.child.sealed) {
+		attachPrecedingThinkingToGroup(prior.child, children, index - 1);
 		children.splice(index, 1);
 		prior.child.addTool(component);
 		lastActiveGroup = prior.child;
@@ -1737,7 +1783,9 @@ function maybeGroup(parent: any, component: any): void {
 	// Previous sibling is a bare tool → merge both into a new group.
 	if (prior && isGroupable(prior.child)) {
 		const group = new ToolGroupComponent();
+		attachPrecedingThinkingToGroup(group, children, prior.index - 1);
 		group.addTool(prior.child);
+		attachPrecedingThinkingToGroup(group, children, index - 1);
 		group.addTool(component);
 		(parent as any).children[prior.index] = group;
 		children.splice(index, 1);
@@ -1749,6 +1797,7 @@ function maybeGroup(parent: any, component: any): void {
 	// Otherwise (sealed group before, or nothing groupable) → wrap the tool in a
 	// fresh open group so it stays visible.
 	const group = new ToolGroupComponent();
+	attachPrecedingThinkingToGroup(group, children, index - 1);
 	group.addTool(component);
 	(parent as any).children[index] = group;
 	noteGroupMount(parent, group);
@@ -1785,6 +1834,10 @@ const groupAnchors = new WeakMap<ToolGroupComponent, { container: Container; ord
 function thinkingAlreadyShown(text: string): boolean {
 	const norm = text.trim();
 	if (!norm) return true;
+	if (activeThinking && activeThinking.text.trim() === norm) return true;
+	for (const entry of unattachedThinking) {
+		if (entry.text.trim() === norm) return true;
+	}
 	for (const group of groups) {
 		for (const entry of group.entries) {
 			if (entry.kind === "thinking" && entry.text.trim() === norm) return true;
@@ -1846,7 +1899,10 @@ function ensureHistoricalThinkingAnchors(
 		}
 	}
 
-	stageHistoricalThinking(state, textOrdinal, currentThinkingBlocks, message);
+	const hasToolCalls = content.some((item: any) => item?.type === "toolCall");
+	if (!hasToolCalls && textOrdinal === 0 && currentThinkingBlocks.length > 0) {
+		stageHistoricalThinking(state, 0, currentThinkingBlocks, message);
+	}
 }
 
 /**
@@ -1876,13 +1932,21 @@ function installNativeThinkingSuppression(prototype: any = AssistantMessageCompo
 		if (contentContainer) {
 			assistantContentContainers.add(contentContainer);
 		}
-		const isLiveStreaming = isStreaming === true || (this as any)[IS_STREAMING_COMP] === true || this === lastStreamingComp;
+		if (isStreaming === true) {
+			this[LIVE_ASSISTANT_KEY] = true;
+		}
+		const isLive = Boolean(this[LIVE_ASSISTANT_KEY]) || isStreaming === true || (this as any)[IS_STREAMING_COMP] === true || this === lastStreamingComp;
 
-		if (!isLiveStreaming && contentContainer && message?.content) {
+		const content = Array.isArray(message?.content) ? message.content : undefined;
+		const hasToolCalls = Boolean(content?.some((item: any) => item?.type === "toolCall"));
+		const hasText = Boolean(content?.some((item: any) => item?.type === "text" && String(item?.text ?? "").trim()));
+
+		// Historical anchor reconstruction is ONLY for non-live messages loaded from history.
+		// If the message is currently live or was streamed live in this session, its thinking is ALREADY in the compact tree.
+		if (!isLive && contentContainer && message?.content) {
 			ensureHistoricalThinkingAnchors(contentContainer, message);
 		}
 
-		const content = Array.isArray(message?.content) ? message.content : undefined;
 		if (!content?.some((item: any) => item?.type === "thinking")) {
 			originalUpdateContent.call(this, message, isStreaming);
 			return;
@@ -1896,8 +1960,9 @@ function installNativeThinkingSuppression(prototype: any = AssistantMessageCompo
 			isStreaming,
 		);
 
-		// If this was a historical thinking-only message with no text, attach the trailing thinking group directly
-		if (!isLiveStreaming && contentContainer && !content.some((item: any) => item?.type === "text" && String(item?.text ?? "").trim())) {
+		// If this was a true historical thinking-only message (NO text AND NO tool calls), attach the group.
+		// If it has tool calls, its thinking belongs to the tool group — NEVER attach it here.
+		if (!isLive && !hasToolCalls && !hasText && contentContainer) {
 			const state = getAssistantContentState(contentContainer);
 			const group = state.anchors.get(0);
 			if (group && group.hasVisibleEntries() && !contentContainer.children.includes(group)) {
@@ -1910,12 +1975,19 @@ function installNativeThinkingSuppression(prototype: any = AssistantMessageCompo
 		}
 	};
 	prototype.updateContent = installedUpdateContent;
-	if (typeof prototype.setHideThinkingBlock === "function" && !prototype[ASSISTANT_THINKING_PATCH_KEY]) {
+	if (typeof prototype.setHideThinkingBlock === "function") {
 		const originalSetHideThinkingBlock = prototype.setHideThinkingBlock as (this: any, hide: boolean) => void;
 		prototype.setHideThinkingBlock = function (this: any, _hide: boolean): void {
 			// Thinking stays in the compact tree. Letting Pi show it again paints a second copy.
 			this.hiddenThinkingLabel = "";
 			originalSetHideThinkingBlock.call(this, true);
+		};
+	}
+	if (typeof prototype.setHiddenThinkingLabel === "function") {
+		const originalSetHiddenThinkingLabel = prototype.setHiddenThinkingLabel as (this: any, label: string) => void;
+		prototype.setHiddenThinkingLabel = function (this: any, _label: string): void {
+			this.hiddenThinkingLabel = "";
+			originalSetHiddenThinkingLabel.call(this, "");
 		};
 	}
 	prototype[ASSISTANT_THINKING_PATCH_KEY] = {
@@ -2241,22 +2313,10 @@ function installGrouping(): void {
 					// thinking-only group can be inserted right after it later.
 					if (isAssistantMessage(component)) {
 						const assistant = component as any;
-						const alreadyPatched = ensureAssistantThinkingPatched(assistant);
+						ensureAssistantThinkingPatched(assistant);
 						const streaming = assistant.isStreaming === true;
-						// Historical messages are constructed before they join the chat. If
-						// that first paint used Pi's unpatched renderer, rebuild once so the
-						// native thinking block is dropped and the compact anchor is created.
-						if (!alreadyPatched && !streaming && assistant.lastMessage && !assistant[ASSISTANT_REBUILDING]) {
-							assistant[ASSISTANT_REBUILDING] = true;
-							const previousStream = lastStreamingComp;
-							if (previousStream === assistant) lastStreamingComp = null;
-							assistant[IS_STREAMING_COMP] = false;
-							try {
-								assistant.updateContent(assistant.lastMessage, false);
-							} finally {
-								delete assistant[ASSISTANT_REBUILDING];
-								if (lastStreamingComp === null) lastStreamingComp = previousStream;
-							}
+						if (streaming) {
+							assistant[LIVE_ASSISTANT_KEY] = true;
 						}
 						lastChatContainer = this;
 						lastStreamingComp = assistant;
