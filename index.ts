@@ -9,9 +9,9 @@
  * Entries are listed in stream order, oldest first, one line each. The entry
  * row spins while it is still streaming:
  *   ⠋ tool calling...
- *   │  ⠋ thinking: Planning the fix...
+ *   │  ⠋ thinking Planning the fix...
  *   │  ✓ bash: ls /tmp && cat fi... (3s)
- *   └  ✓ thinking: The cache is stale · 1.2K tok
+ *   └  ✓ thinking The cache is stale · 1.2K tok
  *
  * Ctrl+O toggles collapse/expand (via setExpanded, same as built-in tools).
  * Expand line counts are configurable via /compact-ui-config (interactive
@@ -43,13 +43,21 @@ import {
 	SettingsList,
 	Spacer,
 	Text,
+	isKeyRelease,
 	matchesKey,
+	parseKey,
 	stripTerminalSequences,
 	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import type { Component, DefaultTextStyle, MarkdownTheme, SettingItem } from "@earendil-works/pi-tui";
+import type {
+	Component,
+	DefaultTextStyle,
+	MarkdownTheme,
+	OverlayHandle,
+	SettingItem,
+} from "@earendil-works/pi-tui";
 import { readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -154,12 +162,55 @@ const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", 
 // 100ms/frame (10fps) matches pi's default spinner cadence; 300ms felt laggy.
 const SPINNER_MS = 100;
 const GROUP_PADDING_X = 1;
+const GROUP_PADDING_RIGHT = 2;
 const spinnerStart = Date.now();
 const PARENT_KEY = Symbol.for("compact-ui.group-parent");
 const PATCH_KEY = Symbol.for("compact-ui.group-patch");
 const MARKDOWN_RENDER_PATCH_KEY = Symbol.for("compact-ui.markdown-render-patch");
 const COMPACTION_STYLE_PATCH_KEY = Symbol.for("compact-ui.compaction-style-patch");
 const ASSISTANT_THINKING_PATCH_KEY = Symbol.for("compact-ui.assistant-thinking-patch");
+const IS_STREAMING_COMP = Symbol.for("compact-ui.is-streaming-comp");
+
+function isContainer(val: any): val is Container {
+	return Boolean(
+		val &&
+			(val instanceof Container ||
+				val.constructor?.name === "Container" ||
+				(Array.isArray((val as any).children) && typeof (val as any).addChild === "function")),
+	);
+}
+
+function isAssistantMessage(val: any): val is AssistantMessageComponent {
+	return Boolean(
+		val &&
+			(val instanceof AssistantMessageComponent ||
+				val.constructor?.name === "AssistantMessageComponent"),
+	);
+}
+
+function isToolExecution(val: any): val is ToolExecutionComponent {
+	return Boolean(
+		val &&
+			(val instanceof ToolExecutionComponent ||
+				val.constructor?.name === "ToolExecutionComponent"),
+	);
+}
+
+function isSpacer(val: any): val is Spacer {
+	return Boolean(val && (val instanceof Spacer || val.constructor?.name === "Spacer"));
+}
+
+function isMarkdown(val: any): val is Markdown {
+	return Boolean(val && (val instanceof Markdown || val.constructor?.name === "Markdown"));
+}
+
+function isText(val: any): val is Text {
+	return Boolean(val && (val instanceof Text || val.constructor?.name === "Text"));
+}
+
+function isToolGroup(val: any): val is ToolGroupComponent {
+	return Boolean(val && (val instanceof ToolGroupComponent || val.constructor?.name === "ToolGroupComponent"));
+}
 
 // -----------------------------------------------------------------------------
 // Compact block contents. A block is an ordered list of the exact items the
@@ -540,49 +591,7 @@ function installCompactionSummaryRendering(): void {
 	};
 }
 
-/**
- * Pi's hidden-thinking mode still renders one Text component per thinking run.
- * Setting its label to "" hides the glyphs, but the Text itself still occupies
- * a terminal row and Pi may add adjacent Spacer components around it.
- *
- * compact-ui already renders thinking inside ToolGroupComponent, so remove
- * thinking blocks from the presentation-only message passed to Pi's native
- * AssistantMessageComponent. The original session/model message is untouched,
- * and visible text/tool-call ordering is preserved.
- */
-function installNativeThinkingSuppression(): void {
-	const prototype = AssistantMessageComponent.prototype as any;
-	const previous = prototype[ASSISTANT_THINKING_PATCH_KEY] as
-		| {
-				originalUpdateContent: (this: any, message: any, isStreaming?: boolean) => void;
-				installedUpdateContent: (this: any, message: any, isStreaming?: boolean) => void;
-		  }
-		| undefined;
-	const originalUpdateContent =
-		previous && prototype.updateContent === previous.installedUpdateContent
-			? previous.originalUpdateContent
-			: (prototype.updateContent as (this: any, message: any, isStreaming?: boolean) => void);
-	const installedUpdateContent = function (this: any, message: any, isStreaming?: boolean): void {
-		const content = Array.isArray(message?.content) ? message.content : undefined;
-		if (!content?.some((item: any) => item?.type === "thinking")) {
-			originalUpdateContent.call(this, message, isStreaming);
-			return;
-		}
-		originalUpdateContent.call(
-			this,
-			{
-				...message,
-				content: content.filter((item: any) => item?.type !== "thinking"),
-			},
-			isStreaming,
-		);
-	};
-	prototype.updateContent = installedUpdateContent;
-	prototype[ASSISTANT_THINKING_PATCH_KEY] = {
-		originalUpdateContent,
-		installedUpdateContent,
-	};
-}
+
 
 // =============================================================================
 // ToolGroupComponent
@@ -721,32 +730,71 @@ class ToolGroupComponent extends Container {
 	private colorFor(status: string): string {
 		return status === "pending" ? "accent" : status === "error" ? "error" : "success";
 	}
-	// Tool name in bold accent, tool payload in dim.
-	private toolRow(rail: string, tool: any, frame: string): string {
+	// Tool name in bold accent, tool payload in dim, elapsed right-aligned to width.
+	private toolRow(rail: string, tool: any, frame: string, width: number): string {
 		const theme = currentTheme;
 		const fg = (color: string, text: string) => theme?.fg?.(color, text) ?? text;
 		const bold = theme?.bold ? theme.bold : (t: string) => t;
 		const st = toolStatus(tool);
 		const s = toolSummary(tool.toolName, tool.args);
 		const prefix = rail ? fg("dim", rail) : "";
-		return `${prefix}${fg(this.colorFor(st), this.iconFor(tool, frame))} ${fg("toolTitle", bold(s.name))} ${fg("dim", s.content)} ${fg("muted", `(${toolElapsed(tool)}s)`)}`;
+		const leftHeader = `${prefix}${fg(this.colorFor(st), this.iconFor(tool, frame))} ${fg("toolTitle", bold(s.name))}`;
+		const right = fg("muted", `(${toolElapsed(tool)}s)`);
+		const rightLen = visibleWidth(right);
+		const headerLen = visibleWidth(leftHeader);
+
+		if (s.content) {
+			const maxContentLen = width - headerLen - 1 - rightLen - 1;
+			if (maxContentLen > 3) {
+				const truncatedContent = truncateToWidth(s.content, maxContentLen, "…");
+				const left = `${leftHeader} ${fg("dim", truncatedContent)}`;
+				const gap = Math.max(1, width - visibleWidth(left) - rightLen);
+				return `${left}${" ".repeat(gap)}${right}`;
+			}
+		}
+
+		const gap = Math.max(1, width - headerLen - rightLen);
+		return `${leftHeader}${" ".repeat(gap)}${right}`;
 	}
 
 	// One row per thinking run. The spinner marks the run that is still streaming;
-	// the completion mark is written as soon as the run ends.
-	private thinkingRow(rail: string, entry: ThinkingEntry, frame: string, width: number): string {
+	// the completion mark is written as soon as the run ends. Token label is right-aligned.
+	private thinkingRow(
+		rail: string,
+		entry: ThinkingEntry,
+		frame: string,
+		width: number,
+		showPreview = true,
+	): string {
 		const theme = currentTheme;
 		const fg = (color: string, text: string) => theme?.fg?.(color, text) ?? text;
 		const icon = entry.active ? frame : "✓";
-		const preview = entry.text.trim().replace(/[*_#`>]+/g, "");
 		const prefix = rail ? fg("dim", rail) : "";
-		if (!preview) {
+		const preview = showPreview ? entry.text.trim().replace(/[*_#`>]+/g, "") : "";
+
+		if (showPreview && !preview) {
 			const label = entry.active ? "thinking..." : "thinking";
-			return `${prefix}${fg("thinkingText", icon)} ${fg("thinkingText", label)}`;
+			return `${prefix}${fg("thinkingText", icon)} ${fg("toolTitle", label)}`;
 		}
+
+		const leftHeader = `${prefix}${fg("thinkingText", icon)} ${fg("toolTitle", "thinking")}`;
 		const tokenLabel = thinkingTokenLabel(entry);
-		const previewLimit = Math.max(1, Math.min(60, width - GROUP_PADDING_X - rail.length - 18 - tokenLabel.length));
-		return `${prefix}${fg("thinkingText", icon)} ${fg("thinkingText", `thinking: ${oneLine(preview, previewLimit)}`)} ${fg("muted", `· ${tokenLabel}`)}`;
+		const right = fg("muted", `· ${tokenLabel}`);
+		const rightLen = visibleWidth(right);
+		const headerLen = visibleWidth(leftHeader);
+
+		if (preview) {
+			const maxPreviewLen = width - headerLen - 1 - rightLen - 1;
+			if (maxPreviewLen > 3) {
+				const truncated = truncateToWidth(preview.replace(/\s+/g, " "), maxPreviewLen, "…");
+				const left = `${leftHeader} ${fg("thinkingText", truncated)}`;
+				const gap = Math.max(1, width - visibleWidth(left) - rightLen);
+				return `${left}${" ".repeat(gap)}${right}`;
+			}
+		}
+
+		const gap = Math.max(1, width - headerLen - rightLen);
+		return `${leftHeader}${" ".repeat(gap)}${right}`;
 	}
 
 	// Folded: header + one line per entry, in stream order (oldest first).
@@ -759,7 +807,7 @@ class ToolGroupComponent extends Container {
 		if (visible.length === 1) {
 			const entry = visible[0]!;
 			if (entry.kind === "tool") {
-				return [this.toolRow("", entry.tool, frame)];
+				return [this.toolRow("", entry.tool, frame, width)];
 			}
 			return [this.thinkingRow("", entry, frame, width)];
 		}
@@ -796,7 +844,7 @@ class ToolGroupComponent extends Container {
 			lines.push(
 				entry.kind === "thinking"
 					? this.thinkingRow(rail, entry, frame, width)
-					: this.toolRow(rail, entry.tool, frame),
+					: this.toolRow(rail, entry.tool, frame, width),
 			);
 		}
 
@@ -816,10 +864,10 @@ class ToolGroupComponent extends Container {
 			const sub = "  ";
 			if (entry.kind === "tool") {
 				const tool = entry.tool;
-				lines.push(this.toolRow("", tool, frame));
+				lines.push(this.toolRow("", tool, frame, width));
 				const result = toolResultText(tool);
 				if (result) {
-					const markdownWidth = Math.max(1, width - GROUP_PADDING_X - sub.length);
+					const markdownWidth = Math.max(1, width - sub.length);
 					const preview = this.renderMarkdownPreview(
 						`tool:${tool.toolCallId ?? 0}`,
 						result,
@@ -837,13 +885,10 @@ class ToolGroupComponent extends Container {
 				return lines;
 			}
 
-			const icon = entry.active ? frame : "✓";
-			lines.push(
-				`${fg("thinkingText", icon)} ${fg("thinkingText", "thinking")} ${fg("muted", `· ${thinkingTokenLabel(entry)}`)}`,
-			);
+			lines.push(this.thinkingRow("", entry, frame, width, false));
 			const tText = entry.text.trim();
 			if (tText) {
-				const markdownWidth = Math.max(1, width - GROUP_PADDING_X - sub.length);
+				const markdownWidth = Math.max(1, width - sub.length);
 				const preview = this.renderMarkdownPreview(
 					`thinking:${entry.id}`,
 					tText,
@@ -893,10 +938,10 @@ class ToolGroupComponent extends Container {
 			const sub = isLast ? "    " : "│   ";
 			if (entry.kind === "tool") {
 				const tool = entry.tool;
-				lines.push(this.toolRow(rail, tool, frame));
+				lines.push(this.toolRow(rail, tool, frame, width));
 				const result = toolResultText(tool);
 				if (result) {
-					const markdownWidth = Math.max(1, width - GROUP_PADDING_X - sub.length);
+					const markdownWidth = Math.max(1, width - sub.length);
 					const preview = this.renderMarkdownPreview(
 						`tool:${tool.toolCallId ?? index}`,
 						result,
@@ -914,30 +959,32 @@ class ToolGroupComponent extends Container {
 				continue;
 			}
 
-			const icon = entry.active ? frame : "✓";
-			lines.push(
-				`${fg("dim", rail)}${fg("thinkingText", icon)} ${fg("thinkingText", "thinking")} ${fg("muted", `· ${thinkingTokenLabel(entry)}`)}`,
-			);
+			lines.push(this.thinkingRow(rail, entry, frame, width, false));
 			const tText = entry.text.trim();
-			if (!tText) continue;
-			const markdownWidth = Math.max(1, width - GROUP_PADDING_X - sub.length);
-			const preview = this.renderMarkdownPreview(
-				`thinking:${entry.id}`,
-				tText,
-				markdownWidth,
-				config.expandedThinkingLines,
-				{ color: (text) => currentTheme?.fg?.("thinkingText", text) ?? text, italic: true },
-			);
-			for (const row of preview.lines) {
-				lines.push(`${fg("dim", sub)}${row}`);
-			}
-			if (preview.truncated) {
-				lines.push(`${fg("dim", sub)}${fg("muted", "…")}`);
+			if (tText) {
+				const markdownWidth = Math.max(1, width - sub.length);
+				const preview = this.renderMarkdownPreview(
+					`thinking:${entry.id}`,
+					tText,
+					markdownWidth,
+					config.expandedThinkingLines,
+					{ color: (text) => currentTheme?.fg?.("thinkingText", text) ?? text, italic: true },
+				);
+				for (const row of preview.lines) {
+					lines.push(`${fg("dim", sub)}${row}`);
+				}
+				if (preview.truncated) {
+					lines.push(`${fg("dim", sub)}${fg("muted", "…")}`);
+				}
 			}
 		}
 
 		return lines;
 	}
+
+
+
+
 
 	override render(width: number): string[] {
 		const visible = this.getVisibleEntries();
@@ -945,12 +992,12 @@ class ToolGroupComponent extends Container {
 
 		if (this.needsAnimation()) scheduleAnimation();
 
-		const lines = this._expanded ? this.renderExpanded(width, visible) : this.renderCollapsed(width, visible);
-		if (lines.length === 0) return [];
-		// Indent compact blocks from the transcript edge while keeping every line
-		// within the terminal width (including mobile / narrow terminals).
 		const padding = " ".repeat(Math.min(GROUP_PADDING_X, Math.max(0, width - 1)));
-		const contentWidth = Math.max(1, width - padding.length);
+		const contentWidth = Math.max(1, width - padding.length - GROUP_PADDING_RIGHT);
+		const lines = this._expanded
+			? this.renderExpanded(contentWidth, visible)
+			: this.renderCollapsed(contentWidth, visible);
+		if (lines.length === 0) return [];
 		const rendered = lines.map((line) => padding + truncateToWidth(line, contentWidth, "…"));
 		// Native ToolExecutionComponent starts with Spacer(1). Our custom render
 		// bypasses that child tree, so restore the same single leading gap while
@@ -959,6 +1006,591 @@ class ToolGroupComponent extends Container {
 		return this.anchored ? rendered : ["", ...rendered];
 	}
 }
+
+// =============================================================================
+// Detail Modal Component: centered popup showing full tool / thinking details.
+// Auto-follows scrolling while streaming, supports Esc and clicking outside.
+// =============================================================================
+let activeModalHandle: OverlayHandle | null = null;
+let activeModalComponent: DetailModalComponent | null = null;
+let activeModalCloseFn: (() => void) | null = null;
+let activeUIContext: any = null;
+
+class DetailModalComponent implements Component {
+	readonly entry: GroupEntry;
+	private scrollTop = 0;
+	private followingEnd = true;
+	private lastContentLineCount = 0;
+	private lastInnerHeight = 10;
+	private pollTimer: ReturnType<typeof setInterval> | null = null;
+
+	constructor(entry: GroupEntry) {
+		this.entry = entry;
+		this.startPollingIfNeeded();
+	}
+
+	private isEntryActive(): boolean {
+		if (this.entry.kind === "thinking") {
+			return this.entry.active;
+		}
+		return toolStatus(this.entry.tool) === "pending";
+	}
+
+	private startPollingIfNeeded(): void {
+		if (this.isEntryActive()) {
+			this.pollTimer = setInterval(() => {
+				capturedTui?.requestRender?.();
+				if (!this.isEntryActive() && this.pollTimer) {
+					clearInterval(this.pollTimer);
+					this.pollTimer = null;
+				}
+			}, 100);
+		}
+	}
+
+	dispose(): void {
+		if (this.pollTimer) {
+			clearInterval(this.pollTimer);
+			this.pollTimer = null;
+		}
+	}
+
+	invalidate(): void {}
+
+	scrollBy(delta: number): void {
+		this.scrollTo(this.scrollTop + delta);
+	}
+
+	scrollTo(newTop: number): void {
+		const maxScroll = Math.max(0, this.lastContentLineCount - this.lastInnerHeight);
+		this.scrollTop = Math.max(0, Math.min(maxScroll, newTop));
+		if (this.scrollTop >= maxScroll) {
+			this.followingEnd = true;
+		} else {
+			this.followingEnd = false;
+		}
+		capturedTui?.requestRender?.();
+	}
+
+	scrollToEnd(): void {
+		this.followingEnd = true;
+		this.scrollTop = Math.max(0, this.lastContentLineCount - this.lastInnerHeight);
+		capturedTui?.requestRender?.();
+	}
+
+	handleInput(data: string): boolean {
+		if (matchesKey(data, Key.escape) || data === "q" || data === "Q") {
+			closeDetailModal();
+			return true;
+		}
+		if (matchesKey(data, Key.up) || data === "k" || data === "K") {
+			this.scrollBy(-1);
+			return true;
+		}
+		if (matchesKey(data, Key.down) || data === "j" || data === "J") {
+			this.scrollBy(1);
+			return true;
+		}
+		if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.left)) {
+			this.scrollBy(-10);
+			return true;
+		}
+		if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.right) || matchesKey(data, Key.space)) {
+			this.scrollBy(10);
+			return true;
+		}
+		if (matchesKey(data, Key.home)) {
+			this.scrollTo(0);
+			return true;
+		}
+		if (matchesKey(data, Key.end)) {
+			this.scrollToEnd();
+			return true;
+		}
+		return false;
+	}
+
+	render(width: number): string[] {
+		const theme = currentTheme;
+		const fg = (color: string, t: string) => theme?.fg?.(color, t) ?? t;
+		const bold = theme?.bold ? theme.bold : (t: string) => t;
+		const borderFg = (t: string) => fg("borderAccent", fg("border", t));
+		const frame = SPINNER[Math.floor((Date.now() - spinnerStart) / SPINNER_MS) % SPINNER.length]!;
+
+		const termHeight = capturedTui?.terminal?.rows ?? 24;
+		const innerHeight = Math.max(5, Math.min(24, Math.floor(termHeight * 0.8) - 2));
+		const innerWidth = Math.max(10, width - 4);
+
+		let title = "";
+		const contentLines: string[] = [];
+
+		if (this.entry.kind === "thinking") {
+			const icon = this.entry.active ? frame : "✓";
+			const tokenStr = thinkingTokenLabel(this.entry);
+			title = `${fg("thinkingText", icon)} ${fg("toolTitle", "Thinking")} ${fg("muted", `· ${tokenStr}`)}`;
+
+			const rawText = this.entry.text.trim();
+			if (!rawText) {
+				contentLines.push(fg("dim", "(思考中...)"));
+			} else {
+				for (const rawLine of rawText.split("\n")) {
+					const wrapped = wrapTextWithAnsi(rawLine, innerWidth);
+					if (wrapped.length === 0) {
+						contentLines.push("");
+					} else {
+						for (const wl of wrapped) {
+							contentLines.push(fg("thinkingText", wl));
+						}
+					}
+				}
+			}
+		} else {
+			const tool = this.entry.tool;
+			const st = toolStatus(tool);
+			const icon = st === "pending" ? frame : st === "error" ? "✗" : "✓";
+			const color = st === "pending" ? "accent" : st === "error" ? "error" : "success";
+			const elapsed = `(${toolElapsed(tool)}s)`;
+			title = `${fg(color, icon)} ${fg("toolTitle", bold(tool.toolName))} ${fg("muted", elapsed)}`;
+
+			if (tool.toolName === "bash" || tool.toolName === "powershell") {
+				const cmd = tool.args?.command || "…";
+				for (const wl of wrapTextWithAnsi(`$ ${cmd}`, innerWidth)) {
+					contentLines.push(fg("accent", wl));
+				}
+			} else if (tool.args?.path) {
+				contentLines.push(`${fg("dim", "路径:")} ${tool.args.path}`);
+			} else if (tool.args) {
+				try {
+					const jsonStr = JSON.stringify(tool.args, null, 2);
+					for (const l of jsonStr.split("\n")) {
+						for (const wl of wrapTextWithAnsi(l, innerWidth)) {
+							contentLines.push(fg("dim", wl));
+						}
+					}
+				} catch {
+					contentLines.push(fg("dim", String(tool.args)));
+				}
+			}
+
+			const resultText = toolResultText(tool);
+			contentLines.push("");
+			contentLines.push(fg("dim", "── 输出 ──"));
+
+			if (resultText) {
+				for (const rawLine of resultText.split("\n")) {
+					const wrapped = wrapTextWithAnsi(rawLine, innerWidth);
+					if (wrapped.length === 0) {
+						contentLines.push("");
+					} else {
+						for (const wl of wrapped) {
+							contentLines.push(fg("toolOutput", wl));
+						}
+					}
+				}
+			} else {
+				contentLines.push(fg("dim", st === "pending" ? "(正在执行中，等待输出...)" : "(无输出)"));
+			}
+		}
+
+		const totalLines = contentLines.length;
+		this.lastContentLineCount = totalLines;
+		this.lastInnerHeight = innerHeight;
+		const maxScroll = Math.max(0, totalLines - innerHeight);
+
+		if (this.followingEnd) {
+			this.scrollTop = maxScroll;
+		} else {
+			this.scrollTop = Math.max(0, Math.min(maxScroll, this.scrollTop));
+		}
+
+		// Top border with close button hint
+		const closeHint = "[Esc 关闭]";
+		const visClose = visibleWidth(closeHint);
+		const maxTitleWidth = Math.max(10, width - visClose - 12);
+		const clampedTitle = truncateToWidth(title, maxTitleWidth, "…");
+		const visTitle = visibleWidth(clampedTitle);
+		const fillerLen = Math.max(1, width - visTitle - visClose - 8);
+		const topBorder =
+			borderFg("┌─ ") +
+			clampedTitle +
+			borderFg(" " + "─".repeat(fillerLen) + " ") +
+			fg("muted", closeHint) +
+			borderFg(" ─┐");
+
+		const result: string[] = [truncateToWidth(topBorder, width)];
+
+		// Middle content lines
+		const slice = contentLines.slice(this.scrollTop, this.scrollTop + innerHeight);
+		while (slice.length < innerHeight) {
+			slice.push("");
+		}
+
+		const showScrollbar = totalLines > innerHeight;
+		const thumbY = showScrollbar && maxScroll > 0 ? Math.round((this.scrollTop / maxScroll) * (innerHeight - 1)) : -1;
+
+		for (let i = 0; i < innerHeight; i++) {
+			const line = slice[i] ?? "";
+			const vis = visibleWidth(line);
+			const truncated = vis > innerWidth ? truncateToWidth(line, innerWidth, "…") : line;
+			const truncVis = visibleWidth(truncated);
+			const pad = Math.max(0, innerWidth - truncVis);
+			const rightChar = showScrollbar && i === thumbY ? fg("scrollbarThumb", "█") : borderFg("│");
+			result.push(borderFg("│ ") + truncated + " ".repeat(pad) + " " + rightChar);
+		}
+
+		// Bottom border
+		const scrollInfo =
+			totalLines > innerHeight
+				? ` [${this.scrollTop + 1}-${Math.min(totalLines, this.scrollTop + innerHeight)}/${totalLines}] `
+				: "";
+		const visInfo = visibleWidth(scrollInfo);
+		const botFiller = Math.max(1, width - 2 - visInfo);
+		const botBorder =
+			borderFg("└" + "─".repeat(botFiller)) + (scrollInfo ? fg("dim", scrollInfo) : "") + borderFg("┘");
+		result.push(truncateToWidth(botBorder, width));
+
+		return result;
+	}
+}
+
+function openDetailModal(entry: GroupEntry): void {
+	closeDetailModal();
+
+	const modal = new DetailModalComponent(entry);
+	activeModalComponent = modal;
+
+	if (capturedTui) {
+		activeModalHandle = capturedTui.showOverlay(modal, {
+			anchor: "center",
+			width: "85%",
+			maxHeight: "80%",
+		});
+		capturedTui.requestRender();
+		return;
+	}
+
+	if (activeUIContext?.custom) {
+		activeUIContext.custom(
+			(tui: any, _theme: any, _keybindings: any, done: () => void) => {
+				capturedTui = tui;
+				activeModalCloseFn = done;
+				return modal;
+			},
+			{
+				overlay: true,
+				overlayOptions: { anchor: "center", width: "85%", maxHeight: "80%" },
+				onHandle: (handle: any) => {
+					activeModalHandle = handle;
+				},
+			},
+		);
+	}
+}
+
+function closeDetailModal(): void {
+	if (activeModalComponent) {
+		activeModalComponent.dispose();
+		activeModalComponent = null;
+	}
+	if (activeModalHandle) {
+		const handle = activeModalHandle;
+		activeModalHandle = null;
+		handle.hide();
+	}
+	if (activeModalCloseFn) {
+		const done = activeModalCloseFn;
+		activeModalCloseFn = null;
+		done();
+	}
+	capturedTui?.requestRender?.();
+}
+
+function getAllInspectableEntries(): GroupEntry[] {
+	const results: GroupEntry[] = [];
+	for (const g of groups) {
+		for (const entry of g.getVisibleEntries()) {
+			results.push(entry);
+		}
+	}
+	return results;
+}
+
+let activeSelectorHandle: OverlayHandle | null = null;
+let activeSelectorComponent: InspectSelectorModal | null = null;
+let activeSelectorCloseFn: (() => void) | null = null;
+
+class InspectSelectorModal implements Component {
+	private entries: GroupEntry[] = [];
+	private selectedIndex = 0;
+	private scrollTop = 0;
+	private visibleHeight = 10;
+
+	constructor() {
+		this.refreshEntries(true);
+	}
+
+	refreshEntries(isInitial = false): void {
+		const wasAtEnd = isInitial || this.selectedIndex >= this.entries.length - 1;
+		this.entries = getAllInspectableEntries();
+		if (this.entries.length === 0) {
+			this.selectedIndex = 0;
+			this.scrollTop = 0;
+			return;
+		}
+		if (wasAtEnd) {
+			// 最新的放到最后，进入后光标停留在最新一条（最后一条）
+			this.selectedIndex = this.entries.length - 1;
+		} else {
+			this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, this.entries.length - 1));
+		}
+		this.adjustScroll();
+	}
+
+	private adjustScroll(): void {
+		if (this.entries.length === 0) {
+			this.scrollTop = 0;
+			return;
+		}
+		if (this.selectedIndex < this.scrollTop) {
+			this.scrollTop = this.selectedIndex;
+		} else if (this.selectedIndex >= this.scrollTop + this.visibleHeight) {
+			this.scrollTop = this.selectedIndex - this.visibleHeight + 1;
+		}
+		const maxScroll = Math.max(0, this.entries.length - this.visibleHeight);
+		this.scrollTop = Math.max(0, Math.min(this.scrollTop, maxScroll));
+	}
+
+	handleInput(data: string): boolean {
+		if (matchesKey(data, Key.escape) || data === "q" || data === "Q") {
+			closeInspectSelectorModal();
+			return true;
+		}
+		if (matchesKey(data, Key.enter) || data === "\r" || data === "\n") {
+			const selected = this.entries[this.selectedIndex];
+			if (selected) {
+				closeInspectSelectorModal();
+				openDetailModal(selected);
+			}
+			return true;
+		}
+		if (matchesKey(data, Key.up) || data === "k" || data === "K") {
+			if (this.entries.length > 0) {
+				this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+				this.adjustScroll();
+				capturedTui?.requestRender?.();
+			}
+			return true;
+		}
+		if (matchesKey(data, Key.down) || data === "j" || data === "J") {
+			if (this.entries.length > 0) {
+				this.selectedIndex = Math.min(this.entries.length - 1, this.selectedIndex + 1);
+				this.adjustScroll();
+				capturedTui?.requestRender?.();
+			}
+			return true;
+		}
+		if (matchesKey(data, Key.pageUp)) {
+			if (this.entries.length > 0) {
+				this.selectedIndex = Math.max(0, this.selectedIndex - this.visibleHeight);
+				this.adjustScroll();
+				capturedTui?.requestRender?.();
+			}
+			return true;
+		}
+		if (matchesKey(data, Key.pageDown)) {
+			if (this.entries.length > 0) {
+				this.selectedIndex = Math.min(this.entries.length - 1, this.selectedIndex + this.visibleHeight);
+				this.adjustScroll();
+				capturedTui?.requestRender?.();
+			}
+			return true;
+		}
+		if (matchesKey(data, Key.home)) {
+			if (this.entries.length > 0) {
+				this.selectedIndex = 0;
+				this.adjustScroll();
+				capturedTui?.requestRender?.();
+			}
+			return true;
+		}
+		if (matchesKey(data, Key.end)) {
+			if (this.entries.length > 0) {
+				this.selectedIndex = this.entries.length - 1;
+				this.adjustScroll();
+				capturedTui?.requestRender?.();
+			}
+			return true;
+		}
+		return false;
+	}
+
+	render(width: number): string[] {
+		const theme = currentTheme;
+		const fg = (color: string, t: string) => theme?.fg?.(color, t) ?? t;
+		const bold = theme?.bold ? theme.bold : (t: string) => t;
+		const borderFg = (t: string) => fg("borderAccent", fg("border", t));
+		const frame = SPINNER[Math.floor((Date.now() - spinnerStart) / SPINNER_MS) % SPINNER.length]!;
+
+		const termHeight = capturedTui?.terminal?.rows ?? 24;
+		const innerHeight = Math.max(5, Math.min(16, Math.floor(termHeight * 0.65)));
+		this.visibleHeight = innerHeight;
+		this.adjustScroll();
+
+		const innerWidth = Math.max(10, width - 4);
+		const lines: string[] = [];
+
+		const title = ` ${fg("accent", bold("Inspect"))} ${fg("dim", "(↑/↓ 选择 · Enter 查看 · Esc 退出)")} `;
+		const visTitle = visibleWidth(title);
+		const topFiller = Math.max(1, width - 2 - visTitle);
+		const topBorder = borderFg("┌" + "─".repeat(topFiller)) + title + borderFg("┐");
+		lines.push(truncateToWidth(topBorder, width));
+
+		if (this.entries.length === 0) {
+			const emptyMsg = "  (暂无工具调用或思考记录)";
+			for (let i = 0; i < innerHeight; i++) {
+				const row = i === Math.floor(innerHeight / 2) ? fg("dim", emptyMsg) : "";
+				const pad = Math.max(0, innerWidth - visibleWidth(row));
+				lines.push(borderFg("│ ") + row + " ".repeat(pad) + borderFg(" │"));
+			}
+		} else {
+			for (let i = 0; i < innerHeight; i++) {
+				const entryIdx = this.scrollTop + i;
+				const entry = this.entries[entryIdx];
+				if (!entry) {
+					lines.push(borderFg("│ ") + " ".repeat(innerWidth) + borderFg(" │"));
+					continue;
+				}
+
+				const isSelected = entryIdx === this.selectedIndex;
+				const prefix = isSelected ? fg("accent", bold("▶ ")) : "  ";
+
+				let leftContent = "";
+				let rightStr = "";
+
+				if (entry.kind === "tool") {
+					const tool = entry.tool;
+					const st = toolStatus(tool);
+					const icon = st === "pending" ? frame : st === "error" ? "✗" : "✓";
+					const iconColor = st === "pending" ? "accent" : st === "error" ? "error" : "success";
+					const s = toolSummary(tool.toolName, tool.args);
+					const elapsed = `(${toolElapsed(tool)}s)`;
+					const toolLabel = fg("toolTitle", bold(s.name));
+					const contentText = fg("dim", s.content || "…");
+					leftContent = `${prefix}${fg(iconColor, icon)} ${toolLabel} ${contentText}`;
+					rightStr = fg("muted", elapsed);
+				} else {
+					const icon = entry.active ? frame : "✓";
+					const tokenLabel = thinkingTokenLabel(entry);
+					const tText = entry.text.trim().replace(/[*_#`>]+/g, "").replace(/\s+/g, " ");
+					const thinkingLabel = fg("toolTitle", "thinking");
+					const contentText = fg("thinkingText", tText || "(思考中...)");
+					leftContent = `${prefix}${fg("thinkingText", icon)} ${thinkingLabel} ${contentText}`;
+					rightStr = fg("muted", `· ${tokenLabel}`);
+				}
+
+				const maxLeft = Math.max(1, innerWidth - visibleWidth(rightStr) - 1);
+				const leftTrunc = truncateToWidth(leftContent, maxLeft, "…");
+				const gap = Math.max(1, innerWidth - visibleWidth(leftTrunc) - visibleWidth(rightStr));
+				let rowLine = `${leftTrunc}${" ".repeat(gap)}${rightStr}`;
+
+				const rowVis = visibleWidth(rowLine);
+				if (rowVis < innerWidth) {
+					rowLine += " ".repeat(innerWidth - rowVis);
+				} else if (rowVis > innerWidth) {
+					rowLine = truncateToWidth(rowLine, innerWidth);
+				}
+
+				if (isSelected) {
+					if (theme?.bg) {
+						rowLine = theme.bg("selectedBg", rowLine);
+					} else if (theme?.inverse) {
+						rowLine = theme.inverse(rowLine);
+					}
+				}
+
+				lines.push(borderFg("│ ") + rowLine + borderFg(" │"));
+			}
+		}
+
+		const countInfo =
+			this.entries.length > 0
+				? ` [${this.selectedIndex + 1}/${this.entries.length}] `
+				: "";
+		const visCount = visibleWidth(countInfo);
+		const botFiller = Math.max(1, width - 2 - visCount);
+		const botBorder =
+			borderFg("└" + "─".repeat(botFiller)) + (countInfo ? fg("dim", countInfo) : "") + borderFg("┘");
+		lines.push(truncateToWidth(botBorder, width));
+
+		return lines;
+	}
+
+	dispose(): void {}
+	invalidate(): void {}
+}
+
+function openInspectSelectorModal(): void {
+	if (activeModalHandle) {
+		closeDetailModal();
+	}
+	closeInspectSelectorModal();
+
+	const modal = new InspectSelectorModal();
+	activeSelectorComponent = modal;
+
+	if (capturedTui) {
+		activeSelectorHandle = capturedTui.showOverlay(modal, {
+			anchor: "center",
+			width: "85%",
+			maxHeight: "70%",
+		});
+		capturedTui.requestRender();
+		return;
+	}
+
+	if (activeUIContext?.custom) {
+		activeUIContext.custom(
+			(tui: any, _theme: any, _keybindings: any, done: () => void) => {
+				capturedTui = tui;
+				activeSelectorCloseFn = done;
+				return modal;
+			},
+			{
+				overlay: true,
+				overlayOptions: { anchor: "center", width: "85%", maxHeight: "70%" },
+				onHandle: (handle: any) => {
+					activeSelectorHandle = handle;
+				},
+			},
+		);
+	}
+}
+
+function closeInspectSelectorModal(): void {
+	if (activeSelectorHandle) {
+		const handle = activeSelectorHandle;
+		activeSelectorHandle = null;
+		handle.hide();
+	}
+	if (activeSelectorCloseFn) {
+		const done = activeSelectorCloseFn;
+		activeSelectorCloseFn = null;
+		done();
+	}
+	if (activeSelectorComponent) {
+		activeSelectorComponent = null;
+	}
+	capturedTui?.requestRender?.();
+}
+
+function disableMouseTracking(): void {
+	if (process.stdout.isTTY) {
+		process.stdout.write("\x1b[?1006l\x1b[?1004l\x1b[?1002l\x1b[?1000l");
+	}
+}
+
+// Reset terminal mouse behavior on process exit
+process.on("exit", disableMouseTracking);
 
 // =============================================================================
 // Animation scheduling. The TUI instance is captured via setWidget's factory
@@ -992,14 +1624,14 @@ function scheduleAnimation(): void {
 const groups = new Set<ToolGroupComponent>();
 
 function isGroupable(value: any): boolean {
-	return value instanceof ToolExecutionComponent;
+	return isToolExecution(value);
 }
 
 function previousGroupable(children: any[], start: number): { child: any; index: number } | undefined {
 	for (let i = start; i >= 0; i--) {
 		const child = children[i];
-		if (child instanceof Spacer) continue;
-		if (child instanceof AssistantMessageComponent) continue;
+		if (isSpacer(child)) continue;
+		if (isAssistantMessage(child)) continue;
 		return { child, index: i };
 	}
 	return undefined;
@@ -1068,7 +1700,7 @@ function flushPendingTextSeal(): void {
 }
 
 function maybeGroup(parent: any, component: any): void {
-	if (!isGroupable(component) || parent instanceof ToolGroupComponent) return;
+	if (!isGroupable(component) || isToolGroup(parent)) return;
 	const children = parent?.children;
 	if (!Array.isArray(children)) return;
 	const index = children.indexOf(component);
@@ -1076,7 +1708,7 @@ function maybeGroup(parent: any, component: any): void {
 	const prior = previousGroupable(children, index - 1);
 
 	// Previous sibling is an open (not-yet-sealed) group → join it.
-	if (prior?.child instanceof ToolGroupComponent && !prior.child.sealed) {
+	if (isToolGroup(prior?.child) && !prior.child.sealed) {
 		children.splice(index, 1);
 		prior.child.addTool(component);
 		lastActiveGroup = prior.child;
@@ -1127,6 +1759,144 @@ type AssistantContentState = {
 };
 const assistantContentStates = new WeakMap<Container, AssistantContentState>();
 const groupAnchors = new WeakMap<ToolGroupComponent, { container: Container; ordinal: number }>();
+
+function ensureHistoricalThinkingAnchors(
+	contentContainer: Container,
+	message: any,
+): void {
+	const content = Array.isArray(message?.content) ? message.content : undefined;
+	if (!content || content.length === 0) return;
+
+	const state = getAssistantContentState(contentContainer);
+	let currentThinkingBlocks: string[] = [];
+	let textOrdinal = 0;
+
+	for (const item of content) {
+		if (item?.type === "thinking") {
+			const text = String(item.thinking ?? "").trim();
+			if (text) currentThinkingBlocks.push(text);
+		} else if (item?.type === "text" && String(item.text ?? "").trim()) {
+			if (currentThinkingBlocks.length > 0 && !state.anchors.has(textOrdinal)) {
+				const group = new ToolGroupComponent();
+				group.anchored = true;
+				group.sealed = true;
+				const reasoningTokens = Number(message?.usage?.reasoning);
+				for (const text of currentThinkingBlocks) {
+					const entry: ThinkingEntry = {
+						kind: "thinking",
+						id: thinkingEntrySeq++,
+						text,
+						tokens:
+							Number.isFinite(reasoningTokens) && reasoningTokens > 0
+								? reasoningTokens
+								: estimateTextTokens(text),
+						tokensExact: Number.isFinite(reasoningTokens) && reasoningTokens > 0,
+						active: false,
+						owner: group,
+					};
+					group.entries.push(entry);
+				}
+				if (group.hasVisibleEntries()) {
+					state.anchors.set(textOrdinal, group);
+					groups.add(group);
+				}
+				currentThinkingBlocks = [];
+			}
+			textOrdinal++;
+		}
+	}
+
+	if (currentThinkingBlocks.length > 0 && !state.anchors.has(textOrdinal)) {
+		const group = new ToolGroupComponent();
+		group.anchored = true;
+		group.sealed = true;
+		const reasoningTokens = Number(message?.usage?.reasoning);
+		for (const text of currentThinkingBlocks) {
+			const entry: ThinkingEntry = {
+				kind: "thinking",
+				id: thinkingEntrySeq++,
+				text,
+				tokens:
+					Number.isFinite(reasoningTokens) && reasoningTokens > 0
+						? reasoningTokens
+						: estimateTextTokens(text),
+				tokensExact: Number.isFinite(reasoningTokens) && reasoningTokens > 0,
+				active: false,
+				owner: group,
+			};
+			group.entries.push(entry);
+		}
+		if (group.hasVisibleEntries()) {
+			state.anchors.set(textOrdinal, group);
+			groups.add(group);
+		}
+	}
+}
+
+/**
+ * Pi's hidden-thinking mode still renders one Text component per thinking run.
+ * Setting its label to "" hides the glyphs, but the Text itself still occupies
+ * a terminal row and Pi may add adjacent Spacer components around it.
+ *
+ * compact-ui already renders thinking inside ToolGroupComponent, so remove
+ * thinking blocks from the presentation-only message passed to Pi's native
+ * AssistantMessageComponent. For historical/non-streaming messages, ensureHistoricalThinkingAnchors
+ * rebuilds the compact thinking groups and anchors them before the matching visible text.
+ */
+function installNativeThinkingSuppression(): void {
+	const prototype = AssistantMessageComponent.prototype as any;
+	const previous = prototype[ASSISTANT_THINKING_PATCH_KEY] as
+		| {
+				originalUpdateContent: (this: any, message: any, isStreaming?: boolean) => void;
+				installedUpdateContent: (this: any, message: any, isStreaming?: boolean) => void;
+		  }
+		| undefined;
+	const originalUpdateContent =
+		previous && prototype.updateContent === previous.installedUpdateContent
+			? previous.originalUpdateContent
+			: (prototype.updateContent as (this: any, message: any, isStreaming?: boolean) => void);
+	const installedUpdateContent = function (this: any, message: any, isStreaming?: boolean): void {
+		const contentContainer = this.contentContainer;
+		if (contentContainer) {
+			assistantContentContainers.add(contentContainer);
+		}
+		const isLiveStreaming = isStreaming === true || (this as any)[IS_STREAMING_COMP] === true || this === lastStreamingComp;
+
+		if (!isLiveStreaming && contentContainer && message?.content) {
+			ensureHistoricalThinkingAnchors(contentContainer, message);
+		}
+
+		const content = Array.isArray(message?.content) ? message.content : undefined;
+		if (!content?.some((item: any) => item?.type === "thinking")) {
+			originalUpdateContent.call(this, message, isStreaming);
+			return;
+		}
+		originalUpdateContent.call(
+			this,
+			{
+				...message,
+				content: content.filter((item: any) => item?.type !== "thinking"),
+			},
+			isStreaming,
+		);
+
+		// If this was a historical thinking-only message with no text, attach the trailing thinking group directly
+		if (!isLiveStreaming && contentContainer && !content.some((item: any) => item?.type === "text" && String(item?.text ?? "").trim())) {
+			const state = getAssistantContentState(contentContainer);
+			const group = state.anchors.get(0);
+			if (group && group.hasVisibleEntries() && !contentContainer.children.includes(group)) {
+				contentContainer.addChild(new Spacer(1));
+				contentContainer.addChild(group);
+				contentContainer.addChild(new Spacer(1));
+			}
+		}
+	};
+	prototype.updateContent = installedUpdateContent;
+	prototype[ASSISTANT_THINKING_PATCH_KEY] = {
+		originalUpdateContent,
+		installedUpdateContent,
+	};
+}
 
 function getAssistantContentState(container: Container): AssistantContentState {
 	let state = assistantContentStates.get(container);
@@ -1200,12 +1970,12 @@ function placeTurnDividerBeforeText(container: Container, target: Markdown, divi
 function insertTurnDivider(elapsedMs: number): void {
 	if (elapsedMs < 1000) return;
 	let comp: any = lastStreamingComp;
-	if (!comp || !(comp instanceof AssistantMessageComponent)) {
+	if (!comp || !isAssistantMessage(comp)) {
 		if (!lastChatContainer) return;
 		const children = (lastChatContainer as any)?.children;
 		if (!Array.isArray(children)) return;
 		for (let i = children.length - 1; i >= 0; i--) {
-			if (children[i] instanceof AssistantMessageComponent) {
+			if (isAssistantMessage(children[i])) {
 				comp = children[i];
 				break;
 			}
@@ -1213,7 +1983,7 @@ function insertTurnDivider(elapsedMs: number): void {
 	}
 	if (!comp) return;
 	const contentContainer = (comp as any).contentContainer;
-	if (!(contentContainer instanceof Container)) return;
+	if (!isContainer(contentContainer)) return;
 
 	const markdowns = contentContainer.children.filter(isVisibleTextMarkdown);
 	if (markdowns.length === 0) return;
@@ -1223,7 +1993,7 @@ function insertTurnDivider(elapsedMs: number): void {
 	// group). A plain text-only answer gets no divider.
 	const hasPriorContent = contentContainer.children
 		.slice(0, finalIndex)
-		.some((child) => child instanceof ToolGroupComponent && child.hasVisibleEntries());
+		.some((child) => isToolGroup(child) && child.hasVisibleEntries());
 	if (!hasPriorContent) return;
 
 	const state = getAssistantContentState(contentContainer);
@@ -1241,7 +2011,7 @@ function isVisibleTextMarkdown(component: any): component is Markdown {
 	// AssistantMessageComponent; normal assistant text does not. Count only
 	// normal text blocks so anchors remain correct if thinking visibility is
 	// toggled on.
-	return component instanceof Markdown && !(component as any).defaultTextStyle;
+	return isMarkdown(component) && !(component as any).defaultTextStyle;
 }
 
 function placeAnchoredGroupBeforeText(container: Container, target: Markdown, group: ToolGroupComponent): void {
@@ -1258,7 +2028,7 @@ function placeAnchoredGroupBeforeText(container: Container, target: Markdown, gr
 	// This also makes repeated cumulative AssistantMessageComponent rebuilds
 	// idempotent instead of accumulating more spacing around restored anchors.
 	let spacerStart = targetIndex;
-	while (spacerStart > 0 && container.children[spacerStart - 1] instanceof Spacer) spacerStart--;
+	while (spacerStart > 0 && isSpacer(container.children[spacerStart - 1])) spacerStart--;
 	if (targetIndex > spacerStart) {
 		container.children.splice(spacerStart, targetIndex - spacerStart);
 	}
@@ -1290,7 +2060,7 @@ function installAssistantExpansion(component: AssistantMessageComponent, content
 function anchorGroupBeforeCurrentText(group: ToolGroupComponent, ordinal: number): void {
 	if (!lastStreamingComp || !lastChatContainer) return;
 	const contentContainer = (lastStreamingComp as any).contentContainer;
-	if (!(contentContainer instanceof Container)) return;
+	if (!isContainer(contentContainer)) return;
 
 	// An open group normally lives directly in the chat container. Remove it
 	// there before nesting it at the exact text boundary.
@@ -1341,9 +2111,9 @@ function restoreAssistantAnchor(parent: any, component: any): void {
 }
 
 function releaseAssistantAnchors(component: any): void {
-	if (!(component instanceof AssistantMessageComponent)) return;
+	if (!isAssistantMessage(component)) return;
 	const contentContainer = (component as any).contentContainer;
-	if (!(contentContainer instanceof Container)) return;
+	if (!isContainer(contentContainer)) return;
 	const state = assistantContentStates.get(contentContainer);
 	if (!state) return;
 	for (const group of state.anchors.values()) {
@@ -1358,7 +2128,7 @@ function releaseAssistantAnchors(component: any): void {
 function stripAssistantPhantomPadding(parent: any, component: any): void {
 	// Mark the plain Container that an AssistantMessageComponent owns as its
 	// content container so we can trim its children later.
-	if (parent instanceof AssistantMessageComponent && component instanceof Container && !(component instanceof AssistantMessageComponent)) {
+	if (isAssistantMessage(parent) && isContainer(component) && !isAssistantMessage(component)) {
 		assistantContentContainers.add(component);
 		getAssistantContentState(component);
 		installAssistantExpansion(parent, component);
@@ -1371,92 +2141,97 @@ function stripAssistantPhantomPadding(parent: any, component: any): void {
 	// every thinking-only assistant message in a multi-tool loop remains as a
 	// one-line blank component; moving the final group into a later text message
 	// then exposes all of those accumulated blank lines as a huge gap.
-	if (component instanceof Text) {
+	if (isText(component)) {
 		const visible = String((component as any).text ?? "").replace(/\x1b\[[0-9;]*m/g, "").trim();
 		if (visible === "") {
 			const index = parent.children.indexOf(component);
 			if (index >= 0) parent.children.splice(index, 1);
-			while (parent.children.at(-1) instanceof Spacer) parent.children.pop();
+			while (isSpacer(parent.children.at(-1))) parent.children.pop();
 		}
 	}
 }
 
 function installGrouping(): void {
 	const host = globalThis as any;
-	const prototype = Container.prototype as any;
-	const previous = host[PATCH_KEY] as PatchState | undefined;
-	// Always (re-)install. On hot-reload (/reload) the old instance's prototype
-	// patch stays on Container.prototype but its closures reference the OLD
-	// module state (groups/lastActiveGroup). Skipping here would leave the new
-	// instance's event handlers reading a different lastActiveGroup than the one
-	// the patch writes, so message-boundary sealing would never fire. Re-install
-	// with the preserved original so future addChild calls use THIS instance's
-	// closures.
+	const prototypes: any[] = [Container.prototype];
+	const agentContainerProto = Object.getPrototypeOf(AssistantMessageComponent.prototype);
+	if (agentContainerProto && agentContainerProto !== Object.prototype && !prototypes.includes(agentContainerProto)) {
+		prototypes.push(agentContainerProto);
+	}
 
-	const original = {
-		addChild: previous && prototype.addChild === previous.installed.addChild ? previous.original.addChild : prototype.addChild,
-		removeChild: previous && prototype.removeChild === previous.installed.removeChild ? previous.original.removeChild : prototype.removeChild,
-		clear: previous && prototype.clear === previous.installed.clear ? previous.original.clear : prototype.clear,
-	};
-	const state: PatchState = {
-		active: true,
-		prototype,
-		original,
-		installed: undefined as any,
-	};
-	state.installed = {
-		addChild: function (this: any, component: any) {
-			const result = state.original.addChild.call(this, component);
-			if (component && typeof component === "object") {
-				// Remember where the current assistant message component lives so a
-				// thinking-only group can be inserted right after it later.
-				if (component instanceof AssistantMessageComponent) {
-					lastChatContainer = this;
-					lastStreamingComp = component;
-					// A run that started before its message component existed can now
-					// be placed in the transcript, in front of this message's text.
-					if (unattachedThinking.length > 0) ensureThinkingGroup();
-					flushPendingTextSeal();
+	const patchKey = PATCH_KEY;
+	const previous = host[patchKey] as Map<any, PatchState> | undefined;
+	const stateMap = new Map<any, PatchState>();
+
+	for (const prototype of prototypes) {
+		const prev = previous instanceof Map ? previous.get(prototype) : (previous as any as PatchState | undefined);
+		const original = {
+			addChild: prev && prototype.addChild === prev.installed.addChild ? prev.original.addChild : prototype.addChild,
+			removeChild: prev && prototype.removeChild === prev.installed.removeChild ? prev.original.removeChild : prototype.removeChild,
+			clear: prev && prototype.clear === prev.installed.clear ? prev.original.clear : prototype.clear,
+		};
+		const state: PatchState = {
+			active: true,
+			prototype,
+			original,
+			installed: undefined as any,
+		};
+		state.installed = {
+			addChild: function (this: any, component: any) {
+				const result = state.original.addChild.call(this, component);
+				if (component && typeof component === "object") {
+					// Remember where the current assistant message component lives so a
+					// thinking-only group can be inserted right after it later.
+					if (isAssistantMessage(component)) {
+						lastChatContainer = this;
+						lastStreamingComp = component;
+						(component as any)[IS_STREAMING_COMP] = true;
+						// A run that started before its message component existed can now
+						// be placed in the transcript, in front of this message's text.
+						if (unattachedThinking.length > 0) ensureThinkingGroup();
+						flushPendingTextSeal();
+					}
+					maybeGroup(this, component);
+					stripAssistantPhantomPadding(this, component);
+					restoreAssistantAnchor(this, component);
 				}
-				maybeGroup(this, component);
-				stripAssistantPhantomPadding(this, component);
-				restoreAssistantAnchor(this, component);
-			}
-			return result;
-		},
-		removeChild: function (this: any, component: any) {
-			const group = component?.[PARENT_KEY];
-			if (group instanceof ToolGroupComponent && (group as any)[PARENT_KEY] === this) {
-				group.removeTool(component);
-				if (group.children.length === 0 && group.entries.length === 0) groups.delete(group);
-				return;
-			}
-			releaseAssistantAnchors(component);
-			return state.original.removeChild.call(this, component);
-		},
-		clear: function (this: any) {
-			if (assistantContentContainers.has(this)) {
-				// AssistantMessageComponent rebuilds this container for every
-				// cumulative stream update. Keep sealed compact groups in the
-				// anchor map; restoreAssistantAnchor() reinserts each one before
-				// its matching Markdown child as the rebuild proceeds.
-				getAssistantContentState(this).nextTextOrdinal = 0;
+				return result;
+			},
+			removeChild: function (this: any, component: any) {
+				const group = component?.[PARENT_KEY];
+				if (isToolGroup(group) && (group as any)[PARENT_KEY] === this) {
+					group.removeTool(component);
+					if (group.children.length === 0 && group.entries.length === 0) groups.delete(group);
+					return;
+				}
+				releaseAssistantAnchors(component);
+				return state.original.removeChild.call(this, component);
+			},
+			clear: function (this: any) {
+				if (assistantContentContainers.has(this)) {
+					// AssistantMessageComponent rebuilds this container for every
+					// cumulative stream update. Keep sealed compact groups in the
+					// anchor map; restoreAssistantAnchor() reinserts each one before
+					// its matching Markdown child as the rebuild proceeds.
+					getAssistantContentState(this).nextTextOrdinal = 0;
+					return state.original.clear.call(this);
+				}
+				for (const child of [...(this.children ?? [])]) {
+					if (isToolGroup(child)) {
+						for (const tool of [...child.children] as any[]) delete tool[PARENT_KEY];
+						groups.delete(child);
+					}
+					releaseAssistantAnchors(child);
+				}
 				return state.original.clear.call(this);
-			}
-			for (const child of [...(this.children ?? [])]) {
-				if (child instanceof ToolGroupComponent) {
-					for (const tool of [...child.children] as any[]) delete tool[PARENT_KEY];
-					groups.delete(child);
-				}
-				releaseAssistantAnchors(child);
-			}
-			return state.original.clear.call(this);
-		},
-	};
-	prototype.addChild = state.installed.addChild;
-	prototype.removeChild = state.installed.removeChild;
-	prototype.clear = state.installed.clear;
-	host[PATCH_KEY] = state;
+			},
+		};
+		prototype.addChild = state.installed.addChild;
+		prototype.removeChild = state.installed.removeChild;
+		prototype.clear = state.installed.clear;
+		stateMap.set(prototype, state);
+	}
+	host[patchKey] = stateMap;
 }
 
 // =============================================================================
@@ -1488,6 +2263,17 @@ function getTools(cwd: string): Record<string, AnyTool> {
 	return tools;
 }
 
+function isCtrlI(data: string): boolean {
+	// 忽略按键释放 (key release / key up) 事件，防止松开按键时误触发切换关闭
+	if (isKeyRelease(data)) {
+		return false;
+	}
+	// 在传统终端中，Ctrl+I 发送的字节码为 ASCII 0x09 ("\t")，与 Tab 键相同。
+	// 为了不破坏 Tab 自动补全功能，排除普通的 "\t"，
+	// 仅当终端启用 Kitty 键盘协议或 modifyOtherKeys 等扩展按键报告时识别为 Ctrl+I。
+	return data !== "\t" && (parseKey(data) === "ctrl+i" || matchesKey(data, "ctrl+i"));
+}
+
 export default function (pi: ExtensionAPI) {
 	installGrouping();
 	installNativeThinkingSuppression();
@@ -1516,9 +2302,51 @@ export default function (pi: ExtensionAPI) {
 		});
 	}
 
+	// 不在此处直接调用 pi.registerShortcut("ctrl+i")，因为 Pi 内部的 interactive-mode
+	// 使用 matchesKey 匹配快捷键，而 matchesKey 会将 Tab 键 ("\t") 也视作 "ctrl+i"，
+	// 导致常规的 Tab 补全失效。因此通过 onTerminalInput + isCtrlI 仅在扩展终端协议下识别 Ctrl+I。
+
+	pi.registerCommand("compact-inspect", {
+		description: "选择工具调用或思考记录并查看详细信息 (快捷键: Ctrl+I)",
+		handler: async () => {
+			openInspectSelectorModal();
+		},
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
 		currentTheme = ctx.ui.theme;
+		activeUIContext = ctx.ui;
 		ctx.ui.setHiddenThinkingLabel("");
+
+		ctx.ui.onTerminalInput((data: string) => {
+			if (isKeyRelease(data)) {
+				return activeModalHandle || activeSelectorHandle ? { consume: true } : undefined;
+			}
+
+			if (activeModalHandle) {
+				if (matchesKey(data, Key.escape) || data === "q" || data === "Q") {
+					closeDetailModal();
+					return { consume: true };
+				}
+				return undefined;
+			}
+
+			if (activeSelectorHandle) {
+				if (matchesKey(data, Key.escape) || data === "q" || data === "Q" || isCtrlI(data)) {
+					closeInspectSelectorModal();
+					return { consume: true };
+				}
+				return undefined;
+			}
+
+			if (isCtrlI(data)) {
+				openInspectSelectorModal();
+				return { consume: true };
+			}
+
+			return undefined;
+		});
+
 		// Capture the TUI instance via setWidget's factory so the animation can
 		// call its throttled requestRender() to repaint just the changed cells.
 		ctx.ui.setWidget("compact-anim", (tui: any) => {
@@ -1530,9 +2358,16 @@ export default function (pi: ExtensionAPI) {
 		installCompactionSummaryRendering();
 	});
 
+	pi.on("session_shutdown", async () => {
+		closeDetailModal();
+		closeInspectSelectorModal();
+	});
+
 	pi.on("tool_execution_start", async (event) => {
 		toolStarts.set(event.toolCallId, Date.now());
 		lastActiveGroup?.invalidate();
+		activeSelectorComponent?.refreshEntries();
+		capturedTui?.requestRender?.();
 	});
 
 	pi.on("tool_execution_end", async (event) => {
@@ -1542,6 +2377,8 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 		lastActiveGroup?.invalidate();
+		activeSelectorComponent?.refreshEntries();
+		capturedTui?.requestRender?.();
 	});
 
 	pi.on("message_start", async (event) => {
@@ -1654,6 +2491,8 @@ export default function (pi: ExtensionAPI) {
 		// Refresh the active block when thinking starts/stops (event-driven only;
 		// no timer, so the transcript scroll position is never yanked around).
 		lastActiveGroup?.invalidate();
+		activeSelectorComponent?.refreshEntries();
+		capturedTui?.requestRender?.();
 	});
 
 	pi.on("agent_end", async () => {
@@ -1671,6 +2510,8 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 		refreshSealedThinkingTokens();
+		activeSelectorComponent?.refreshEntries();
+		capturedTui?.requestRender?.();
 		// Separate the final visible text from the preceding work with a divider
 		// that reports how long this turn ran.
 		const elapsedMs = Date.now() - turnStartMs;

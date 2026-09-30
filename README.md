@@ -19,9 +19,9 @@ glyph is a spinner while the entry is still streaming:
 
 ```text
 ⠋ tool calling...
-│  ✓ thinking: The parser test is failing… · 1.2K tok
+│  ✓ thinking The parser test is failing… · 1.2K tok
 │  ✓ bash: npm test (3.2s)
-└  ⠋ thinking: The assertion is off by one…
+└  ⠋ thinking The assertion is off by one…
 ```
 
 Expand the group to inspect tool arguments, result previews, and more of the
@@ -50,6 +50,7 @@ reasoning content:
 - Shows reasoning-token usage. During streaming it uses an estimate, then
   prefers provider-reported usage when available.
 - Follows Pi's standard `Ctrl+O` expand and collapse behavior.
+- Press `Ctrl+I` (or run `/compact-inspect`) to interactively select any tool call or thinking run with `↑`/`↓` and press `Enter` to pop up a centered modal showing full details. Press `Esc` or `q` to close.
 - Renders fenced code blocks as subtle theme-aware background panels with
   syntax highlighting and one character of horizontal padding instead of
   decorative top and bottom border rows.
