@@ -30,6 +30,7 @@ import {
 	createFindTool,
 	createGrepTool,
 	createLsTool,
+	createPowerShellTool,
 	createReadTool,
 	createWriteTool,
 	getMarkdownTheme,
@@ -313,7 +314,8 @@ function refreshSealedThinkingTokens(reportedReasoning?: unknown): void {
 function toolSummary(name: string, args: any): { name: string; content: string } {
 	switch (name) {
 		case "bash":
-			return { name: "bash", content: oneLine(args?.command || "…") };
+		case "powershell":
+			return { name, content: oneLine(args?.command || "…") };
 		case "read":
 			return { name: "read", content: shortenPath(args?.path || "…") };
 		case "write":
@@ -1474,6 +1476,7 @@ function getTools(cwd: string): Record<string, AnyTool> {
 		tools = {
 			read: createReadTool(cwd),
 			bash: createBashTool(cwd),
+			powershell: createPowerShellTool(cwd),
 			edit: createEditTool(cwd),
 			write: createWriteTool(cwd),
 			find: createFindTool(cwd),
@@ -1501,7 +1504,7 @@ export default function (pi: ExtensionAPI) {
 			return getTools((ctx as { cwd: string }).cwd)[name].execute(toolCallId, params, signal, onUpdate);
 		};
 
-	for (const name of ["read", "bash", "edit", "write", "find", "grep", "ls"] as const) {
+	for (const name of ["read", "bash", "powershell", "edit", "write", "find", "grep", "ls"] as const) {
 		pi.registerTool({
 			name,
 			label: name,

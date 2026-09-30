@@ -53,8 +53,8 @@ reasoning content:
 - Renders fenced code blocks as subtle theme-aware background panels with
   syntax highlighting and one character of horizontal padding instead of
   decorative top and bottom border rows.
-- Preserves Pi's native execution semantics for `read`, `bash`, `edit`, `write`,
-  `find`, `grep`, and `ls`.
+- Preserves Pi's native execution semantics for `read`, `bash`, `powershell`, `edit`,
+  `write`, `find`, `grep`, and `ls`.
 - Gives compaction summaries a distinct, compact presentation.
 
 ## Installation
