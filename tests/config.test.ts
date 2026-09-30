@@ -10,8 +10,8 @@ test("配置读取合并默认值，不修改默认配置", () => {
 		assert.equal(encoding, "utf-8");
 		return '{"expandedToolLines":12}';
 	});
-	assert.deepEqual(loaded, { expandedToolLines: 12, expandedThinkingLines: 10 });
-	assert.deepEqual(DEFAULT_CONFIG, { expandedToolLines: 5, expandedThinkingLines: 10 });
+	assert.deepEqual(loaded, { expandedToolLines: 12, expandedThinkingLines: 10, maxGroupEntries: 5 });
+	assert.deepEqual(DEFAULT_CONFIG, { expandedToolLines: 5, expandedThinkingLines: 10, maxGroupEntries: 5 });
 });
 
 test("缺失或损坏的配置返回独立的默认值副本", () => {

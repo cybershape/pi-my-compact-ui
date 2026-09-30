@@ -105,6 +105,94 @@ test("折叠和展开渲染遵守宽度、单条目无树头，预览受配置�
 	assert.ok(rows.indexOf("bash") < rows.indexOf("after tool"));
 });
 
+test("思考超长时使用 '... ' 截断并保留尾部空格", () => {
+	const group = new ToolGroupComponent();
+	group.addThinking(thinking("We are analyzing the code thoroughly to find the best way to solve this issue."));
+	const rendered = group.render(60).join("\n");
+	assert.ok(rendered.includes("... "));
+	assert.ok(!rendered.includes("…"));
+});
+
+test("组内条数超过上限时，标题显示 (N hidden)，最上面一条使用较浅颜色渲染", () => {
+	const group = new ToolGroupComponent();
+	// 添加 7 个条目，默认上限为 5
+	for (let i = 1; i <= 7; i++) {
+		group.addTool({
+			toolName: `cmd_${i}`,
+			toolCallId: `call_${i}`,
+			args: {},
+			result: { content: [] },
+			render: () => ["native"],
+			invalidate() {},
+		});
+	}
+
+	runtime.currentTheme = {
+		fg: (c: string, t: string) => `[${c}]${t}[/${c}]`,
+		bold: (t: string) => `<b>${t}</b>`,
+	};
+
+	const rendered = group.render(80);
+	const text = rendered.join("\n");
+
+	// 标题应包含 (2 hidden)
+	assert.ok(text.includes("(2 hidden)"));
+
+	// 较早的 cmd_1 与 cmd_2 应被隐藏
+	assert.ok(!text.includes("cmd_1"));
+	assert.ok(!text.includes("cmd_2"));
+
+	// 剩余的 5 个条目应该出现
+	assert.ok(text.includes("cmd_3"));
+	assert.ok(text.includes("cmd_7"));
+
+	// 最上面一条 (cmd_3) 应使用较浅颜色 (dim) 渲染名称，而非粗体 toolTitle
+	assert.ok(text.includes("[dim]cmd_3[/dim]"));
+	// 后续条目 (如 cmd_4) 应正常使用 toolTitle 与加粗
+	assert.ok(text.includes("[toolTitle]<b>cmd_4</b>[/toolTitle]"));
+
+	// 若首条可见项为 thinking，也应使用较浅颜色
+	const groupWithThinking = new ToolGroupComponent();
+	groupWithThinking.addTool(tool("c1"));
+	groupWithThinking.addThinking(thinking("top thinking"));
+	for (let i = 2; i <= 5; i++) {
+		groupWithThinking.addTool(tool(`c${i}`));
+	}
+	const textThinking = groupWithThinking.render(80).join("\n");
+	assert.ok(textThinking.includes("(1 hidden)"));
+	assert.ok(textThinking.includes("[dim]thinking[/dim]"));
+
+	runtime.currentTheme = null;
+});
+
+test("组内条数未超上限时，不显示 hidden 标记且首条保持正常颜色", () => {
+	const group = new ToolGroupComponent();
+	for (let i = 1; i <= 3; i++) {
+		group.addTool({
+			toolName: `cmd_${i}`,
+			toolCallId: `call_${i}`,
+			args: {},
+			result: { content: [] },
+			render: () => ["native"],
+			invalidate() {},
+		});
+	}
+
+	runtime.currentTheme = {
+		fg: (c: string, t: string) => `[${c}]${t}[/${c}]`,
+		bold: (t: string) => `<b>${t}</b>`,
+	};
+
+	const rendered = group.render(80);
+	const text = rendered.join("\n");
+
+	assert.ok(!text.includes("hidden"));
+	assert.ok(text.includes("cmd_1"));
+	assert.ok(text.includes("[toolTitle]<b>cmd_1</b>[/toolTitle]"));
+
+	runtime.currentTheme = null;
+});
+
 test("工具参数开始流式输出时生成占位行，真实工具吸收参数与起始时间", () => {
 	const parent = new Container();
 	const assistant = new Container();

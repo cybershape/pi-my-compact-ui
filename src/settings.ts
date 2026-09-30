@@ -23,6 +23,14 @@ export const CONFIG_KEYS = [
 		max: 100,
 		step: 1,
 	},
+	{
+		id: "maxGroupEntries",
+		label: "Max collapsed entries",
+		description: "Maximum entries shown in collapsed group",
+		min: 1,
+		max: 30,
+		step: 1,
+	},
 ] as const;
 
 export function makeStepper(

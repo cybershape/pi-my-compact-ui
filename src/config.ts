@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from "fs";
 
 export const CONFIG_PATH = join(homedir(), ".pi", "agent", "compact-ui.json");
 
-export const DEFAULT_CONFIG = { expandedToolLines: 5, expandedThinkingLines: 10 };
+export const DEFAULT_CONFIG = { expandedToolLines: 5, expandedThinkingLines: 10, maxGroupEntries: 5 };
 
 export const config = loadConfig(CONFIG_PATH);
 

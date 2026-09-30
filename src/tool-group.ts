@@ -149,15 +149,17 @@ export class ToolGroupComponent extends Container {
 		return status === "pending" ? "accent" : status === "error" ? "error" : "success";
 	}
 	// Tool name in bold accent, tool payload in dim, elapsed right-aligned to width.
-	private toolRow(rail: string, tool: any, frame: string, width: number): string {
+	private toolRow(rail: string, tool: any, frame: string, width: number, isDim = false): string {
 		const theme = runtime.currentTheme;
 		const fg = (color: string, text: string) => theme?.fg?.(color, text) ?? text;
 		const bold = theme?.bold ? theme.bold : (t: string) => t;
 		const st = toolStatus(tool);
 		const s = toolSummary(tool.toolName, tool.args);
 		const prefix = rail ? fg("dim", rail) : "";
-		const leftHeader = `${prefix}${fg(this.colorFor(st), this.iconFor(tool, frame))} ${fg("toolTitle", bold(s.name))}`;
-		const right = fg("muted", `(${toolElapsed(tool)}s)`);
+		const leftHeader = isDim
+			? `${prefix}${fg("dim", this.iconFor(tool, frame))} ${fg("dim", s.name)}`
+			: `${prefix}${fg(this.colorFor(st), this.iconFor(tool, frame))} ${fg("toolTitle", bold(s.name))}`;
+		const right = fg(isDim ? "dim" : "muted", `(${toolElapsed(tool)}s)`);
 		const rightLen = visibleWidth(right);
 		const headerLen = visibleWidth(leftHeader);
 
@@ -182,32 +184,36 @@ export class ToolGroupComponent extends Container {
 		entry: ThinkingEntry,
 		width: number,
 		showPreview = true,
+		isDim = false,
 	): string {
 		const theme = runtime.currentTheme;
 		const fg = (color: string, text: string) => theme?.fg?.(color, text) ?? text;
 		const spin = entry.active ? thinkingSpinnerFrame() : undefined;
 		const icon = spin?.frame ?? "✓";
-		const iconColor = spin?.color ?? "thinkingText";
+		const iconColor = isDim ? "dim" : (spin?.color ?? "thinkingText");
 		const prefix = rail ? fg("dim", rail) : "";
 		const preview = showPreview ? entry.text.trim().replace(/[*_#`>]+/g, "") : "";
 
 		if (showPreview && !preview) {
 			const label = entry.active ? "thinking..." : "thinking";
-			return `${prefix}${fg(iconColor, icon)} ${fg("toolTitle", label)}`;
+			const titleColor = isDim ? "dim" : "toolTitle";
+			return `${prefix}${fg(iconColor, icon)} ${fg(titleColor, label)}`;
 		}
 
-		const leftHeader = `${prefix}${fg(iconColor, icon)} ${fg("toolTitle", "thinking")}`;
+		const titleColor = isDim ? "dim" : "toolTitle";
+		const leftHeader = `${prefix}${fg(iconColor, icon)} ${fg(titleColor, "thinking")}`;
 
 		const tokenLabel = thinkingTokenLabel(entry);
-		const right = fg("muted", tokenLabel);
+		const right = fg(isDim ? "dim" : "muted", tokenLabel);
 		const rightLen = visibleWidth(right);
 		const headerLen = visibleWidth(leftHeader);
 
 		if (preview) {
 			const maxPreviewLen = width - headerLen - 1 - rightLen - 1;
 			if (maxPreviewLen > 3) {
-				const truncated = truncateToWidth(preview.replace(/\s+/g, " "), maxPreviewLen, "…");
-				const left = `${leftHeader} ${fg("thinkingText", truncated)}`;
+				const truncated = truncateToWidth(preview.replace(/\s+/g, " "), maxPreviewLen, "... ");
+				const contentColor = isDim ? "dim" : "thinkingText";
+				const left = `${leftHeader} ${fg(contentColor, truncated)}`;
 				const gap = Math.max(1, width - visibleWidth(left) - rightLen);
 				return `${left}${" ".repeat(gap)}${right}`;
 			}
@@ -256,17 +262,24 @@ export class ToolGroupComponent extends Container {
 		// Left icon: spinner while working, completion mark once the group is done.
 		const leftIcon = working ? (thinkingSpin?.frame ?? frame) : "✓";
 		const leftColor = thinkingSpin?.color ?? stateColor;
-		lines.push(`${fg(leftColor, leftIcon)} ${fg(stateColor, state)}`);
+
+		const maxEntries = config.maxGroupEntries ?? 5;
+		const hiddenCount = visible.length > maxEntries ? visible.length - maxEntries : 0;
+		const hiddenSuffix = hiddenCount > 0 ? ` ${fg("muted", `(${hiddenCount} hidden)`)}` : "";
+		lines.push(`${fg(leftColor, leftIcon)} ${fg(stateColor, state)}${hiddenSuffix}`);
 
 		// Every entry is shown, one line each, in the order the model produced it.
-		const total = visible.length;
+		// When hiddenCount > 0, hide oldest entries and fade the top visible entry.
+		const entriesToRender = hiddenCount > 0 ? visible.slice(hiddenCount) : visible;
+		const total = entriesToRender.length;
 		for (let index = 0; index < total; index++) {
-			const entry = visible[index]!;
+			const entry = entriesToRender[index]!;
 			const rail = index === total - 1 ? "└  " : "│  ";
+			const isDim = hiddenCount > 0 && index === 0;
 			lines.push(
 				entry.kind === "thinking"
-					? this.thinkingRow(rail, entry, width)
-					: this.toolRow(rail, entry.tool, frame, width),
+					? this.thinkingRow(rail, entry, width, true, isDim)
+					: this.toolRow(rail, entry.tool, frame, width, isDim),
 			);
 		}
 
