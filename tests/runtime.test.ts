@@ -105,14 +105,23 @@ test("折叠和展开渲染遵守宽度、单条目无树头，预览受配置�
 	assert.ok(rows.indexOf("bash") < rows.indexOf("after tool"));
 });
 
-test("思考超长时使用 '...' 截断，与右侧信息之间保持单个空格", () => {
+test("思考超长时使用 '...' 截断，与右侧信息之间保持单个空格且颜色与文本一致", () => {
 	const group = new ToolGroupComponent();
 	group.addThinking(thinking("We are analyzing the code thoroughly to find the best way to solve this issue."));
+
+	runtime.currentTheme = {
+		fg: (c: string, t: string) => `\x1b[38;5;${c === "thinkingText" ? 244 : 250}m${t}\x1b[39m`,
+	};
+
 	const rendered = group.render(60).join("\n");
 	const plain = stripTerminalSequences(rendered);
 	assert.ok(plain.includes("... ("));
 	assert.ok(!plain.includes("...  ("));
 	assert.ok(!rendered.includes("…"));
+	// 省略号应该与 thinkingText 同色
+	assert.ok(rendered.includes("\x1b[38;5;244m...\x1b[39m"));
+
+	runtime.currentTheme = null;
 });
 
 test("组内条数超过上限时，标题显示 (N hidden)，最上面一条使用较浅颜色渲染", () => {

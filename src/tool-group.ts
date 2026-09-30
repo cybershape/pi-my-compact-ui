@@ -166,7 +166,7 @@ export class ToolGroupComponent extends Container {
 		if (s.content) {
 			const maxContentLen = width - headerLen - 1 - rightLen - 1;
 			if (maxContentLen > 3) {
-				const truncatedContent = truncateToWidth(s.content, maxContentLen, "…");
+				const truncatedContent = truncateToWidth(s.content, maxContentLen, fg("dim", "…"));
 				const left = `${leftHeader} ${fg("dim", truncatedContent)}`;
 				const gap = Math.max(1, width - visibleWidth(left) - rightLen);
 				return `${left}${" ".repeat(gap)}${right}`;
@@ -211,8 +211,9 @@ export class ToolGroupComponent extends Container {
 		if (preview) {
 			const maxPreviewLen = width - headerLen - 1 - rightLen - 1;
 			if (maxPreviewLen > 3) {
-				const truncated = truncateToWidth(preview.replace(/\s+/g, " "), maxPreviewLen, "...");
 				const contentColor = isDim ? "dim" : "thinkingText";
+				const ellipsis = fg(contentColor, "...");
+				const truncated = truncateToWidth(preview.replace(/\s+/g, " "), maxPreviewLen, ellipsis);
 				const left = `${leftHeader} ${fg(contentColor, truncated)}`;
 				const gap = Math.max(1, width - visibleWidth(left) - rightLen);
 				return `${left}${" ".repeat(gap)}${right}`;
