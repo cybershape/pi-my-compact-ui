@@ -25,14 +25,6 @@ import {
 	AssistantMessageComponent,
 	CompactionSummaryMessageComponent,
 	ToolExecutionComponent,
-	createBashTool,
-	createEditTool,
-	createFindTool,
-	createGrepTool,
-	createLsTool,
-	createPowerShellTool,
-	createReadTool,
-	createWriteTool,
 	getMarkdownTheme,
 	getSettingsListTheme,
 } from "@earendil-works/pi-coding-agent";
@@ -1155,7 +1147,7 @@ class DetailModalComponent implements Component {
 
 			const rawText = this.entry.text.trim();
 			if (!rawText) {
-				contentLines.push(fg("dim", "(思考中...)"));
+				contentLines.push(fg("dim", "(thinking...)"));
 			} else {
 				for (const rawLine of rawText.split("\n")) {
 					const wrapped = wrapTextWithAnsi(rawLine, innerWidth);
@@ -1182,7 +1174,7 @@ class DetailModalComponent implements Component {
 					contentLines.push(fg("accent", wl));
 				}
 			} else if (tool.args?.path) {
-				contentLines.push(`${fg("dim", "路径:")} ${tool.args.path}`);
+				contentLines.push(`${fg("dim", "Path:")} ${tool.args.path}`);
 			} else if (tool.args) {
 				try {
 					const jsonStr = JSON.stringify(tool.args, null, 2);
@@ -1198,7 +1190,7 @@ class DetailModalComponent implements Component {
 
 			const resultText = toolResultText(tool);
 			contentLines.push("");
-			contentLines.push(fg("dim", "── 输出 ──"));
+			contentLines.push(fg("dim", "── Output ──"));
 
 			if (resultText) {
 				for (const rawLine of resultText.split("\n")) {
@@ -1212,7 +1204,7 @@ class DetailModalComponent implements Component {
 					}
 				}
 			} else {
-				contentLines.push(fg("dim", st === "pending" ? "(正在执行中，等待输出...)" : "(无输出)"));
+				contentLines.push(fg("dim", st === "pending" ? "(running, waiting for output...)" : "(no output)"));
 			}
 		}
 
@@ -1228,7 +1220,7 @@ class DetailModalComponent implements Component {
 		}
 
 		// Top border with close button hint
-		const closeHint = "[Esc 关闭]";
+		const closeHint = "[Esc to close]";
 		const visClose = visibleWidth(closeHint);
 		const maxTitleWidth = Math.max(10, width - visClose - 12);
 		const clampedTitle = truncateToWidth(title, maxTitleWidth, "…");
@@ -1362,7 +1354,7 @@ class InspectSelectorModal implements Component {
 			return;
 		}
 		if (wasAtEnd) {
-			// 最新的放到最后，进入后光标停留在最新一条（最后一条）
+			// Place newest entries at the bottom; focus starts on the latest (last) entry
 			this.selectedIndex = this.entries.length - 1;
 		} else {
 			this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, this.entries.length - 1));
@@ -1463,14 +1455,14 @@ class InspectSelectorModal implements Component {
 		const innerWidth = Math.max(10, width - 4);
 		const lines: string[] = [];
 
-		const title = ` ${fg("accent", bold("Inspect"))} ${fg("dim", "(↑/↓ 选择 · Enter 查看 · Esc 退出)")} `;
+		const title = ` ${fg("accent", bold("Inspect"))} ${fg("dim", "(↑/↓ select · Enter view · Esc exit)")} `;
 		const visTitle = visibleWidth(title);
 		const topFiller = Math.max(1, width - 2 - visTitle);
 		const topBorder = borderFg("┌" + "─".repeat(topFiller)) + title + borderFg("┐");
 		lines.push(truncateToWidth(topBorder, width));
 
 		if (this.entries.length === 0) {
-			const emptyMsg = "  (暂无工具调用或思考记录)";
+			const emptyMsg = "  (no tool calls or thinking entries)";
 			for (let i = 0; i < innerHeight; i++) {
 				const row = i === Math.floor(innerHeight / 2) ? fg("dim", emptyMsg) : "";
 				const pad = Math.max(0, innerWidth - visibleWidth(row));
@@ -1507,7 +1499,7 @@ class InspectSelectorModal implements Component {
 					const tokenLabel = thinkingTokenLabel(entry);
 					const tText = entry.text.trim().replace(/[*_#`>]+/g, "").replace(/\s+/g, " ");
 					const thinkingLabel = fg("toolTitle", "thinking");
-					const contentText = fg("thinkingText", tText || "(思考中...)");
+					const contentText = fg("thinkingText", tText || "(thinking...)");
 					leftContent = `${prefix}${fg("thinkingText", icon)} ${thinkingLabel} ${contentText}`;
 					rightStr = fg("muted", tokenLabel);
 				}
@@ -2071,7 +2063,7 @@ class TurnDividerComponent {
 		const right = avail - left;
 		const dash = (n: number) => "─".repeat(Math.max(0, n));
 		const line = `${fg("dim", dash(left))} ${fg("muted", middle)} ${fg("dim", dash(right))}`;
-		return [truncateToWidth(line, Math.max(1, width))];
+		return [truncateToWidth(line, Math.max(1, width)), ""];
 	}
 
 	invalidate(): void {}
@@ -2369,43 +2361,14 @@ function installGrouping(): void {
 	host[patchKey] = stateMap;
 }
 
-// =============================================================================
-// Built-in tool delegation (render nothing natively)
-// =============================================================================
-// pi's built-in tools carry schema-inferred parameter and result types. compact-ui
-// only forwards the calls (rendering is replaced), so they stay opaque here.
-type AnyTool = {
-	parameters: any;
-	execute: (...args: any[]) => Promise<any>;
-};
-
-const toolCache = new Map<string, Record<string, AnyTool>>();
-function getTools(cwd: string): Record<string, AnyTool> {
-	let tools = toolCache.get(cwd);
-	if (!tools) {
-		tools = {
-			read: createReadTool(cwd),
-			bash: createBashTool(cwd),
-			powershell: createPowerShellTool(cwd),
-			edit: createEditTool(cwd),
-			write: createWriteTool(cwd),
-			find: createFindTool(cwd),
-			grep: createGrepTool(cwd),
-			ls: createLsTool(cwd),
-		};
-		toolCache.set(cwd, tools);
-	}
-	return tools;
-}
-
 function isCtrlI(data: string): boolean {
-	// 忽略按键释放 (key release / key up) 事件，防止松开按键时误触发切换关闭
+	// Ignore key release events to prevent accidental toggling on key up
 	if (isKeyRelease(data)) {
 		return false;
 	}
-	// 在传统终端中，Ctrl+I 发送的字节码为 ASCII 0x09 ("\t")，与 Tab 键相同。
-	// 为了不破坏 Tab 自动补全功能，排除普通的 "\t"，
-	// 仅当终端启用 Kitty 键盘协议或 modifyOtherKeys 等扩展按键报告时识别为 Ctrl+I。
+	// In legacy terminals, Ctrl+I sends byte 0x09 ("\t"), identical to Tab.
+	// To keep Tab completion working, exclude plain "\t" and only recognize
+	// Ctrl+I under extended keyboard protocols (Kitty keyboard, modifyOtherKeys).
 	return data !== "\t" && (parseKey(data) === "ctrl+i" || matchesKey(data, "ctrl+i"));
 }
 
@@ -2414,35 +2377,12 @@ export default function (pi: ExtensionAPI) {
 	installNativeThinkingSuppression();
 	installCompactionSummaryRendering();
 
-	const delegate = (name: keyof ReturnType<typeof getTools>) =>
-		async (
-			toolCallId: string,
-			params: unknown,
-			signal?: AbortSignal,
-			onUpdate?: unknown,
-			ctx?: unknown,
-		): Promise<any> => {
-			return getTools((ctx as { cwd: string }).cwd)[name].execute(toolCallId, params, signal, onUpdate);
-		};
-
-	for (const name of ["read", "bash", "powershell", "edit", "write", "find", "grep", "ls"] as const) {
-		pi.registerTool({
-			name,
-			label: name,
-			description: `Built-in ${name} (rendering handled by compact-ui group).`,
-			parameters: getTools(process.cwd())[name].parameters,
-			execute: delegate(name),
-			renderCall: () => new Text("", 0, 0),
-			renderResult: () => new Text("", 0, 0),
-		});
-	}
-
-	// 不在此处直接调用 pi.registerShortcut("ctrl+i")，因为 Pi 内部的 interactive-mode
-	// 使用 matchesKey 匹配快捷键，而 matchesKey 会将 Tab 键 ("\t") 也视作 "ctrl+i"，
-	// 导致常规的 Tab 补全失效。因此通过 onTerminalInput + isCtrlI 仅在扩展终端协议下识别 Ctrl+I。
+	// Do not use pi.registerShortcut("ctrl+i") directly because pi's internal
+	// matchesKey treats "\t" as "ctrl+i", which breaks regular Tab completion.
+	// Instead, recognize Ctrl+I under extended protocols via onTerminalInput + isCtrlI.
 
 	pi.registerCommand("compact-inspect", {
-		description: "选择工具调用或思考记录并查看详细信息 (快捷键: Ctrl+I)",
+		description: "Select a tool call or thinking entry to inspect details (Shortcut: Ctrl+I)",
 		handler: async () => {
 			openInspectSelectorModal();
 		},
