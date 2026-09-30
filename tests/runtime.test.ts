@@ -95,7 +95,7 @@ test("折叠和展开渲染遵守宽度、单条目无树头，预览受配置�
 	group.setExpanded(true);
 	const expanded = group.render(60);
 	assert.ok(expanded.join("\n").includes("row 0"));
-	assert.ok(expanded.join("\n").includes("…"));
+	assert.ok(expanded.join("\n").includes("..."));
 	assert.ok(!expanded.join("\n").includes("row 29"));
 	for (const width of [1, 8, 20, 80]) assert.ok(group.render(width).every((line) => visibleWidth(line) <= width));
 	group.addThinking(thinking("after tool"));
@@ -119,6 +119,31 @@ test("思考超长时使用 '...' 截断，与右侧信息之间保持单个空�
 	assert.ok(!plain.includes("...  ("));
 	assert.ok(!rendered.includes("…"));
 	// 省略号应该与 thinkingText 同色
+	assert.ok(rendered.includes("\x1b[38;5;244m...\x1b[39m"));
+
+	runtime.currentTheme = null;
+});
+
+test("工具行超长时按整行宽度截断到耗时前，且省略号使用 '...' 与耗时保持单个空格", () => {
+	const group = new ToolGroupComponent();
+	group.addTool({
+		toolName: "bash",
+		toolCallId: "call_long",
+		args: { command: "git commit -m 'feat: limit group entries with hidden count and dimming, update thinking ellipsis'" },
+		result: { content: [] },
+		render: () => ["native"],
+		invalidate() {},
+	});
+
+	runtime.currentTheme = {
+		fg: (c: string, t: string) => `\x1b[38;5;${c === "dim" ? 244 : 250}m${t}\x1b[39m`,
+	};
+
+	const rendered = group.render(80).join("\n");
+	const plain = stripTerminalSequences(rendered);
+	assert.ok(plain.includes("... ("));
+	assert.ok(!plain.includes("...  ("));
+	assert.ok(!rendered.includes("…"));
 	assert.ok(rendered.includes("\x1b[38;5;244m...\x1b[39m"));
 
 	runtime.currentTheme = null;

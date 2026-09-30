@@ -11,7 +11,7 @@ import type { ThinkingEntry } from "../src/types.js";
 test("单行摘要折叠空白、处理空值并截断", () => {
 	assert.equal(oneLine("  a\n b\t c  "), "a b c");
 	assert.equal(oneLine(null), "");
-	assert.equal(oneLine("abcdef", 4), "abc…");
+	assert.equal(oneLine("abcdef", 4), "a...");
 	assert.equal(oneLine(123), "123");
 });
 
@@ -21,7 +21,7 @@ test("路径与工具摘要保留默认值和参数优先级", () => {
 	const cases: [string, unknown, string][] = [
 		["bash", { command: "echo\n hello" }, "echo hello"],
 		["powershell", { command: "Get-Item ." }, "Get-Item ."],
-		["read", {}, "…"], ["write", { path: "a.ts" }, "a.ts"],
+		["read", {}, "..."], ["write", { path: "a.ts" }, "a.ts"],
 		["edit", { path: "a.ts" }, "a.ts"], ["ls", {}, "."],
 		["find", { pattern: "*.ts" }, "*.ts in ."],
 		["grep", { pattern: "TODO", path: "src" }, "TODO in src"],
@@ -29,7 +29,7 @@ test("路径与工具摘要保留默认值和参数优先级", () => {
 		["subagent", { agent: "review", task: "ignored" }, "review"],
 		["custom", { path: "p", query: "q" }, "p"],
 		["custom", { url: "https://example.com" }, "https://example.com"],
-		["custom", undefined, "…"],
+		["custom", undefined, "..."],
 	];
 	for (const [name, args, content] of cases) assert.deepEqual(toolSummary(name, args), { name, content });
 });

@@ -166,7 +166,7 @@ export class ToolGroupComponent extends Container {
 		if (s.content) {
 			const maxContentLen = width - headerLen - 1 - rightLen - 1;
 			if (maxContentLen > 3) {
-				const truncatedContent = truncateToWidth(s.content, maxContentLen, fg("dim", "…"));
+				const truncatedContent = truncateToWidth(s.content, maxContentLen, fg("dim", "..."));
 				const left = `${leftHeader} ${fg("dim", truncatedContent)}`;
 				const gap = Math.max(1, width - visibleWidth(left) - rightLen);
 				return `${left}${" ".repeat(gap)}${right}`;
@@ -315,7 +315,7 @@ export class ToolGroupComponent extends Container {
 						lines.push(`${fg("dim", sub)}${row}`);
 					}
 					if (preview.truncated) {
-						lines.push(`${fg("dim", sub)}${fg("muted", "…")}`);
+						lines.push(`${fg("dim", sub)}${fg("muted", "...")}`);
 					}
 				}
 				return lines;
@@ -336,7 +336,7 @@ export class ToolGroupComponent extends Container {
 					lines.push(`${fg("dim", sub)}${row}`);
 				}
 				if (preview.truncated) {
-					lines.push(`${fg("dim", sub)}${fg("muted", "…")}`);
+					lines.push(`${fg("dim", sub)}${fg("muted", "...")}`);
 				}
 			}
 			return lines;
@@ -391,7 +391,7 @@ export class ToolGroupComponent extends Container {
 						lines.push(`${fg("dim", sub)}${row}`);
 					}
 					if (preview.truncated) {
-						lines.push(`${fg("dim", sub)}${fg("muted", "…")}`);
+						lines.push(`${fg("dim", sub)}${fg("muted", "...")}`);
 					}
 				}
 				continue;
@@ -412,7 +412,7 @@ export class ToolGroupComponent extends Container {
 					lines.push(`${fg("dim", sub)}${row}`);
 				}
 				if (preview.truncated) {
-					lines.push(`${fg("dim", sub)}${fg("muted", "…")}`);
+					lines.push(`${fg("dim", sub)}${fg("muted", "...")}`);
 				}
 			}
 		}
@@ -436,7 +436,7 @@ export class ToolGroupComponent extends Container {
 			? this.renderExpanded(contentWidth, visible)
 			: this.renderCollapsed(contentWidth, visible);
 		if (lines.length === 0) return [];
-		const rendered = lines.map((line) => padding + truncateToWidth(line, contentWidth, "…"));
+		const rendered = lines.map((line) => padding + truncateToWidth(line, contentWidth, "..."));
 		// Native ToolExecutionComponent starts with Spacer(1). Our custom render
 		// bypasses that child tree, so restore the same single leading gap while
 		// the group is top-level. Anchored groups receive deterministic spacing

@@ -21,7 +21,7 @@ export class CompactionHeaderComponent implements Component {
 
 		const compactTitle = fg("success", "Compacted");
 		const compactDetail = fg("muted", ` • ${formatTokenK(this.tokensBefore)} tok`);
-		return [truncateToWidth(`${icon} ${compactTitle}${compactDetail}`, Math.max(1, width), "…")];
+		return [truncateToWidth(`${icon} ${compactTitle}${compactDetail}`, Math.max(1, width), "...")];
 	}
 
 	invalidate(): void {}

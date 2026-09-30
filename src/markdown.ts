@@ -37,7 +37,7 @@ export function renderCodeBlockBackgroundRow(content: string, width: number): st
 	const safeWidth = Math.max(1, width);
 	const horizontalPadding = Math.min(CODE_BLOCK_PADDING_X, Math.floor((safeWidth - 1) / 2));
 	const innerWidth = Math.max(1, safeWidth - horizontalPadding * 2);
-	const clipped = truncateToWidth(content, innerWidth, "…");
+	const clipped = truncateToWidth(content, innerWidth, "...");
 	const rightFill = " ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
 	const row = `${" ".repeat(horizontalPadding)}${clipped}${rightFill}${" ".repeat(horizontalPadding)}`;
 	return runtime.currentTheme?.bg?.("toolPendingBg", row) ?? row;
@@ -80,7 +80,7 @@ export function normalizeCompactCodeBlockLines(lines: string[], width: number, p
 			}
 			continue;
 		}
-		normalized.push(truncateToWidth(originalLine, safeWidth, "…"));
+		normalized.push(truncateToWidth(originalLine, safeWidth, "..."));
 	}
 
 	return normalized;

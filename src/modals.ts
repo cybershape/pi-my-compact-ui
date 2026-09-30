@@ -147,7 +147,7 @@ export class DetailModalComponent implements Component {
 			title = `${fg(color, icon)} ${fg("toolTitle", bold(tool.toolName))} ${fg("muted", elapsed)}`;
 
 			if (tool.toolName === "bash" || tool.toolName === "powershell") {
-				const cmd = tool.args?.command || "…";
+				const cmd = tool.args?.command || "...";
 				for (const wl of wrapTextWithAnsi(`$ ${cmd}`, innerWidth)) {
 					contentLines.push(fg("accent", wl));
 				}
@@ -201,7 +201,7 @@ export class DetailModalComponent implements Component {
 		const closeHint = "[Esc to close]";
 		const visClose = visibleWidth(closeHint);
 		const maxTitleWidth = Math.max(10, width - visClose - 12);
-		const clampedTitle = truncateToWidth(title, maxTitleWidth, "…");
+		const clampedTitle = truncateToWidth(title, maxTitleWidth, "...");
 		const visTitle = visibleWidth(clampedTitle);
 		const fillerLen = Math.max(1, width - visTitle - visClose - 8);
 		const topBorder =
@@ -225,7 +225,7 @@ export class DetailModalComponent implements Component {
 		for (let i = 0; i < innerHeight; i++) {
 			const line = slice[i] ?? "";
 			const vis = visibleWidth(line);
-			const truncated = vis > innerWidth ? truncateToWidth(line, innerWidth, "…") : line;
+			const truncated = vis > innerWidth ? truncateToWidth(line, innerWidth, "...") : line;
 			const truncVis = visibleWidth(truncated);
 			const pad = Math.max(0, innerWidth - truncVis);
 			const rightChar = showScrollbar && i === thumbY ? fg("scrollbarThumb", "█") : borderFg("│");
@@ -465,7 +465,7 @@ export class InspectSelectorModal implements Component {
 					const s = toolSummary(tool.toolName, tool.args);
 					const elapsed = `(${toolElapsed(tool)}s)`;
 					const toolLabel = fg("toolTitle", bold(s.name));
-					const contentText = fg("dim", s.content || "…");
+					const contentText = fg("dim", s.content || "...");
 					leftContent = `${prefix}${fg(iconColor, icon)} ${toolLabel} ${contentText}`;
 					rightStr = fg("muted", elapsed);
 				} else {
@@ -480,7 +480,7 @@ export class InspectSelectorModal implements Component {
 				}
 
 				const maxLeft = Math.max(1, innerWidth - visibleWidth(rightStr) - 1);
-				const ellipsis = entry.kind === "thinking" ? fg("thinkingText", "...") : fg("dim", "…");
+				const ellipsis = entry.kind === "thinking" ? fg("thinkingText", "...") : fg("dim", "...");
 				const leftTrunc = truncateToWidth(leftContent, maxLeft, ellipsis);
 				const gap = Math.max(1, innerWidth - visibleWidth(leftTrunc) - visibleWidth(rightStr));
 				let rowLine = `${leftTrunc}${" ".repeat(gap)}${rightStr}`;

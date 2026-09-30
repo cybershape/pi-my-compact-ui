@@ -8,9 +8,12 @@ export function shortenPath(path: string): string {
 	return path.startsWith(home) ? `~${path.slice(home.length)}` : path;
 }
 
-export function oneLine(value: unknown, max = 60): string {
+export function oneLine(value: unknown, max?: number): string {
 	const text = String(value ?? "").replace(/\s+/g, " ").trim();
-	return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+	if (typeof max === "number" && text.length > max) {
+		return max <= 3 ? "...".slice(0, max) : `${text.slice(0, max - 3)}...`;
+	}
+	return text;
 }
 
 export function estimateTextTokens(text: string): number {
@@ -38,12 +41,12 @@ export function toolSummary(name: string, args: any): { name: string; content: s
 	switch (name) {
 		case "bash":
 		case "powershell":
-			return { name, content: oneLine(args?.command || "…") };
+			return { name, content: oneLine(args?.command || "...") };
 		case "read":
-			return { name: "read", content: shortenPath(args?.path || "…") };
+			return { name: "read", content: shortenPath(args?.path || "...") };
 		case "write":
 		case "edit":
-			return { name, content: shortenPath(args?.path || "…") };
+			return { name, content: shortenPath(args?.path || "...") };
 		case "find":
 			return { name: "find", content: `${oneLine(args?.pattern || "")} in ${shortenPath(args?.path || ".")}` };
 		case "grep":
@@ -51,12 +54,12 @@ export function toolSummary(name: string, args: any): { name: string; content: s
 		case "ls":
 			return { name: "ls", content: shortenPath(args?.path || ".") };
 		case "web_search":
-			return { name: "web_search", content: oneLine(args?.query || "…") };
+			return { name: "web_search", content: oneLine(args?.query || "...") };
 		case "subagent":
-			return { name: "subagent", content: oneLine(args?.agent || args?.task || "…") };
+			return { name: "subagent", content: oneLine(args?.agent || args?.task || "...") };
 		default: {
 			const preferred = args?.path ?? args?.query ?? args?.name ?? args?.description ?? args?.url;
-			return { name, content: oneLine(preferred ?? "…") };
+			return { name, content: oneLine(preferred ?? "...") };
 		}
 	}
 }
