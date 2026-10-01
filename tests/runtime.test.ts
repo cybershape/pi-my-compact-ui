@@ -6,7 +6,7 @@ import { ToolGroupComponent } from "../src/tool-group.js";
 import { createThinkingEntry, finalizeActiveThinking, refreshSealedThinkingTokens, updateActiveThinkingTokens } from "../src/thinking.js";
 import { absorbPreparingTool, noteStreamingToolCall, takePreparingTool, toolElapsed } from "../src/streaming-tools.js";
 import { PARENT_KEY } from "../src/constants.js";
-import { DetailModalComponent, InspectSelectorModal } from "../src/modals.js";
+import { DetailModalComponent, InspectSelectorModal, openInspectSelectorModal, closeDetailModal, closeInspectSelectorModal } from "../src/modals.js";
 import type { ThinkingEntry } from "../src/types.js";
 import { config, DEFAULT_CONFIG } from "../src/config.js";
 import { initTheme } from "@earendil-works/pi-coding-agent";
@@ -303,6 +303,50 @@ test("检查选择器高度按条目数与 70% 上限动态展开，不受 16 �
 	const lines = selector.render(70);
 	// 50 行终端的 70% 为 35 行
 	assert.equal(lines.length, 35);
+
+	runtime.capturedTui = null;
+});
+
+test("在选择器中按回车弹出详情层时保留选择器层，关闭详情层后返回选择器", () => {
+	const group = new ToolGroupComponent();
+	group.addThinking(thinking("entry 1"));
+	group.addThinking(thinking("entry 2"));
+	runtime.groups.add(group);
+
+	let overlayStack: any[] = [];
+	runtime.capturedTui = {
+		terminal: { rows: 40, columns: 80 },
+		requestRender() {},
+		showOverlay(component: any, options: any) {
+			const handle = {
+				component,
+				options,
+				hide() {
+					overlayStack = overlayStack.filter((h) => h !== handle);
+				},
+			};
+			overlayStack.push(handle);
+			return handle;
+		},
+	};
+
+	openInspectSelectorModal();
+	assert.equal(overlayStack.length, 1);
+	assert.ok(runtime.activeSelectorHandle);
+
+	runtime.activeSelectorComponent!.handleInput("\r");
+	assert.equal(overlayStack.length, 2);
+	assert.ok(runtime.activeSelectorHandle);
+	assert.ok(runtime.activeModalHandle);
+
+	closeDetailModal();
+	assert.equal(overlayStack.length, 1);
+	assert.ok(runtime.activeSelectorHandle);
+	assert.equal(runtime.activeModalHandle, null);
+
+	closeInspectSelectorModal();
+	assert.equal(overlayStack.length, 0);
+	assert.equal(runtime.activeSelectorHandle, null);
 
 	runtime.capturedTui = null;
 });

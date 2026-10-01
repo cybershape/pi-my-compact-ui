@@ -38,7 +38,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (runtime.activeModalHandle) {
-				if (matchesKey(data, Key.escape) || data === "q" || data === "Q") {
+				if (matchesKey(data, Key.escape) || data === "q" || data === "Q" || isCtrlI(data)) {
 					closeDetailModal();
 					return { consume: true };
 				}

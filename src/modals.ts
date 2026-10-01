@@ -359,7 +359,6 @@ export class InspectSelectorModal implements Component {
 		if (matchesKey(data, Key.enter) || data === "\r" || data === "\n") {
 			const selected = this.entries[this.selectedIndex];
 			if (selected) {
-				closeInspectSelectorModal();
 				openDetailModal(selected);
 			}
 			return true;
