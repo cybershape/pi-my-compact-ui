@@ -110,8 +110,8 @@ export class DetailModalComponent implements Component {
 		const borderFg = (t: string) => fg("borderAccent", fg("border", t));
 		const frame = SPINNER[Math.floor((Date.now() - spinnerStart) / SPINNER_MS) % SPINNER.length]!;
 
-		const termHeight = runtime.capturedTui?.terminal?.rows ?? 24;
-		const innerHeight = Math.max(5, Math.min(24, Math.floor(termHeight * 0.8) - 2));
+		const termHeight = runtime.capturedTui?.terminal?.rows ?? process.stdout?.rows ?? 24;
+		const maxInnerHeight = Math.max(5, Math.floor(termHeight * 0.8) - 2);
 		const innerWidth = Math.max(10, width - 4);
 
 		let title = "";
@@ -187,6 +187,7 @@ export class DetailModalComponent implements Component {
 		}
 
 		const totalLines = contentLines.length;
+		const innerHeight = Math.min(Math.max(totalLines, 5), maxInnerHeight);
 		this.lastContentLineCount = totalLines;
 		this.lastInnerHeight = innerHeight;
 		const maxScroll = Math.max(0, totalLines - innerHeight);
@@ -421,8 +422,11 @@ export class InspectSelectorModal implements Component {
 		const borderFg = (t: string) => fg("borderAccent", fg("border", t));
 		const frame = SPINNER[Math.floor((Date.now() - spinnerStart) / SPINNER_MS) % SPINNER.length]!;
 
-		const termHeight = runtime.capturedTui?.terminal?.rows ?? 24;
-		const innerHeight = Math.max(5, Math.min(16, Math.floor(termHeight * 0.65)));
+		const termHeight = runtime.capturedTui?.terminal?.rows ?? process.stdout?.rows ?? 24;
+		const maxInnerHeight = Math.max(5, Math.floor(termHeight * 0.7) - 2);
+		const innerHeight = this.entries.length === 0
+			? 5
+			: Math.min(this.entries.length, maxInnerHeight);
 		this.visibleHeight = innerHeight;
 		this.adjustScroll();
 

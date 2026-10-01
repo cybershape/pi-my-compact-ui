@@ -287,3 +287,22 @@ test("检查选择器默认选择最后一项，向上移动后更新不抢回�
 	selector.refreshEntries();
 	assert.ok(selector.render(70).join("\n").includes("[1/3]"));
 });
+
+test("检查选择器高度按条目数与 70% 上限动态展开，不受 16 行硬编码限制", () => {
+	const group = new ToolGroupComponent();
+	for (let i = 0; i < 40; i++) {
+		group.addThinking(thinking(`item-${i}`));
+	}
+	runtime.groups.add(group);
+
+	runtime.capturedTui = {
+		terminal: { rows: 50, columns: 100 },
+	};
+
+	const selector = new InspectSelectorModal();
+	const lines = selector.render(70);
+	// 50 行终端的 70% 为 35 行
+	assert.equal(lines.length, 35);
+
+	runtime.capturedTui = null;
+});
