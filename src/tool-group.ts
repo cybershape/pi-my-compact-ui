@@ -39,7 +39,9 @@ export class ToolGroupComponent extends Container {
 	addTool(tool: any): void {
 		absorbPreparingTool(tool);
 		hideGroupedToolRender(tool);
-		rememberToolStart(String(tool?.toolCallId ?? ""));
+		if (!tool?.result && !runtime.toolDurations.has(tool?.toolCallId)) {
+			rememberToolStart(String(tool?.toolCallId ?? ""));
+		}
 		this.children.push(tool);
 		if ((tool as any)._groupedAt === undefined) (tool as any)._groupedAt = Date.now();
 		(tool as any)[PARENT_KEY] = this;
@@ -92,6 +94,7 @@ export class ToolGroupComponent extends Container {
 
 	/** True while this group should keep its spinner animating. */
 	needsAnimation(): boolean {
+		if (this.sealed) return false;
 		return this.hasVisibleEntries() && (this.hasPending() || this.hasActiveThinking());
 	}
 

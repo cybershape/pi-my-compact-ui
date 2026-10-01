@@ -8,14 +8,64 @@ import type { PreparingTool } from "./types.js";
 import { locateStreamingToolCall, streamingToolArgs } from "./helpers.js";
 
 export function toolElapsed(tool: any): string {
-	const start = runtime.toolStarts.get(tool.toolCallId) ?? Date.now();
-	const end = tool?.result ? tool._groupEndAt ?? Date.now() : Date.now();
-	return ((end - start) / 1000).toFixed(1);
+	if (typeof tool?._elapsedDuration === "number") {
+		return tool._elapsedDuration.toFixed(1);
+	}
+	const knownDuration = runtime.toolDurations.get(tool.toolCallId);
+	if (knownDuration !== undefined) {
+		tool._elapsedDuration = knownDuration;
+		return knownDuration.toFixed(1);
+	}
+	if (tool?._groupEndAt !== undefined) {
+		const start = runtime.toolStarts.get(tool.toolCallId) ?? tool._groupEndAt;
+		const dur = Math.max(0, (tool._groupEndAt - start) / 1000);
+		tool._elapsedDuration = dur;
+		return dur.toFixed(1);
+	}
+	if (tool?.result) {
+		const resultTs = Number(tool.result?.timestamp);
+		const start = runtime.toolStarts.get(tool.toolCallId);
+		if (start && resultTs && resultTs >= start) {
+			const dur = (resultTs - start) / 1000;
+			tool._elapsedDuration = dur;
+			return dur.toFixed(1);
+		}
+		tool._elapsedDuration = 0;
+		return "0.0";
+	}
+	const start = runtime.toolStarts.get(tool.toolCallId);
+	if (start !== undefined) {
+		return Math.max(0, (Date.now() - start) / 1000).toFixed(1);
+	}
+	return "0.0";
 }
 
 export function rememberToolStart(toolCallId: string): void {
-	if (!toolCallId || runtime.toolStarts.has(toolCallId)) return;
+	if (!toolCallId || runtime.toolStarts.has(toolCallId) || runtime.toolDurations.has(toolCallId)) return;
 	runtime.toolStarts.set(toolCallId, Date.now());
+}
+
+export function loadSessionToolTimings(entries: readonly any[]): void {
+	if (!Array.isArray(entries)) return;
+	for (const entry of entries) {
+		if (entry?.type === "message" && entry.message) {
+			const msg = entry.message;
+			if (msg.role === "assistant" && Array.isArray(msg.content)) {
+				const startTime = Number(msg.timestamp) || (entry.timestamp ? new Date(entry.timestamp).getTime() : 0);
+				for (const block of msg.content) {
+					if (block.type === "toolCall" && block.id) {
+						if (startTime > 0) runtime.toolStarts.set(block.id, startTime);
+					}
+				}
+			} else if (msg.role === "toolResult" && msg.toolCallId) {
+				const endTime = Number(msg.timestamp) || (entry.timestamp ? new Date(entry.timestamp).getTime() : 0);
+				const startTime = runtime.toolStarts.get(msg.toolCallId);
+				if (startTime && endTime >= startTime) {
+					runtime.toolDurations.set(msg.toolCallId, (endTime - startTime) / 1000);
+				}
+			}
+		}
+	}
 }
 
 export function findGroupedTool(toolCallId: string, contentIndex: number): any | undefined {

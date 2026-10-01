@@ -7,7 +7,7 @@ import { openInspectSelectorModal, closeDetailModal, closeInspectSelectorModal }
 import { runtime } from "./state.js";
 import { isKeyRelease, matchesKey, Key } from "@earendil-works/pi-tui";
 import { isCtrlI } from "./helpers.js";
-import { rememberToolStart, clearPreparingTools, noteStreamingToolCall } from "./streaming-tools.js";
+import { rememberToolStart, clearPreparingTools, noteStreamingToolCall, loadSessionToolTimings } from "./streaming-tools.js";
 import { finalizeActiveThinking, createThinkingEntry, updateActiveThinkingTokens, refreshSealedThinkingTokens } from "./thinking.js";
 import { registerConfigCommand } from "./settings.js";
 
@@ -70,6 +70,30 @@ export default function (pi: ExtensionAPI) {
 		installGrouping();
 		installNativeThinkingSuppression();
 		installCompactionSummaryRendering();
+
+		if ((ctx as any)?.sessionManager?.getEntries) {
+			loadSessionToolTimings((ctx as any).sessionManager.getEntries());
+		}
+
+		// Replaying history builds groups that belong to finished past turns.
+		// Seal them once history replay finishes so they do not animate or tick.
+		queueMicrotask(() => {
+			for (const g of runtime.groups) {
+				g.sealed = true;
+				for (const t of g.children as any[]) {
+					if (t.result && t._groupEndAt === undefined) {
+						t._groupEndAt = Date.now();
+					}
+				}
+				g.invalidate();
+			}
+			runtime.lastActiveGroup = null;
+			if (runtime.animTimer) {
+				clearTimeout(runtime.animTimer);
+				runtime.animTimer = null;
+			}
+			runtime.capturedTui?.requestRender?.();
+		});
 	});
 
 	pi.on("session_shutdown", async () => {
@@ -86,9 +110,14 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("tool_execution_end", async (event) => {
+		const end = Date.now();
+		const start = runtime.toolStarts.get(event.toolCallId);
+		if (start !== undefined && !runtime.toolDurations.has(event.toolCallId)) {
+			runtime.toolDurations.set(event.toolCallId, Math.max(0, (end - start) / 1000));
+		}
 		for (const g of runtime.groups) {
 			for (const t of g.children as any[]) {
-				if (t.toolCallId === event.toolCallId) t._groupEndAt = Date.now();
+				if (t.toolCallId === event.toolCallId) t._groupEndAt = end;
 			}
 		}
 		runtime.lastActiveGroup?.invalidate();

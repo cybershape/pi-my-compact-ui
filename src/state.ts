@@ -22,6 +22,7 @@ export interface RuntimeState {
 	lastStreamingComp: any;
 	lastChatContainer: any;
 	toolStarts: Map<string, number>;
+	toolDurations: Map<string, number>;
 	turnStartMs: number;
 	preparingByIndex: Map<number, PreparingTool>;
 	activeModalHandle: OverlayHandle | null;
@@ -57,6 +58,7 @@ export function createRuntimeState(): RuntimeState {
 		lastStreamingComp: null,
 		lastChatContainer: null,
 		toolStarts: new Map<string, number>(),
+		toolDurations: new Map<string, number>(),
 		turnStartMs: 0,
 		preparingByIndex: new Map<number, PreparingTool>(),
 		activeModalHandle: null,

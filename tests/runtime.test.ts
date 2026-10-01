@@ -4,7 +4,7 @@ import { Container, visibleWidth, stripTerminalSequences } from "@earendil-works
 import { createRuntimeState, runtime } from "../src/state.js";
 import { ToolGroupComponent } from "../src/tool-group.js";
 import { createThinkingEntry, finalizeActiveThinking, refreshSealedThinkingTokens, updateActiveThinkingTokens } from "../src/thinking.js";
-import { absorbPreparingTool, noteStreamingToolCall, takePreparingTool, toolElapsed } from "../src/streaming-tools.js";
+import { absorbPreparingTool, noteStreamingToolCall, takePreparingTool, toolElapsed, loadSessionToolTimings } from "../src/streaming-tools.js";
 import { PARENT_KEY } from "../src/constants.js";
 import { DetailModalComponent, InspectSelectorModal, openInspectSelectorModal, closeDetailModal, closeInspectSelectorModal } from "../src/modals.js";
 import type { ThinkingEntry } from "../src/types.js";
@@ -263,6 +263,51 @@ test("同名并行工具不能通过名称猜测匹配，ID 匹配才吸收", ()
 test("工具完成后耗时冻结在结束时间", () => {
 	runtime.toolStarts.set("a", 1000);
 	assert.equal(toolElapsed({ toolCallId: "a", result: {}, _groupEndAt: 3250 }), "2.3");
+});
+
+test("历史会话条目恢复真实工具耗时，且已完成工具不再随 Date.now 刷新递增", () => {
+	const entries = [
+		{
+			type: "message",
+			message: {
+				role: "assistant",
+				timestamp: 10000,
+				content: [{ type: "toolCall", id: "call_hist", name: "bash", arguments: { command: "ls" } }],
+			},
+		},
+		{
+			type: "message",
+			message: {
+				role: "toolResult",
+				toolCallId: "call_hist",
+				toolName: "bash",
+				timestamp: 14200,
+				content: [{ type: "text", text: "file.txt" }],
+			},
+		},
+	];
+
+	loadSessionToolTimings(entries);
+	assert.equal(runtime.toolStarts.get("call_hist"), 10000);
+	assert.equal(runtime.toolDurations.get("call_hist"), 4.2);
+
+	const histTool = { toolCallId: "call_hist", result: { content: [] } };
+	assert.equal(toolElapsed(histTool), "4.2");
+
+	// 再次调用耗时保持稳定，不随当前时间递增
+	assert.equal(toolElapsed(histTool), "4.2");
+
+	// 若工具已有 result 但无历史时间记录，冻结在 0.0s，绝不使用 Date.now 计时
+	const unknownTool = { toolCallId: "unknown", result: { content: [] } };
+	assert.equal(toolElapsed(unknownTool), "0.0");
+	assert.equal(toolElapsed(unknownTool), "0.0");
+});
+
+test("封组后的历史组 needsAnimation 为 false，避免后台死循环刷新", () => {
+	const group = new ToolGroupComponent();
+	group.addTool({ toolCallId: "t1", toolName: "bash", result: {} });
+	group.sealed = true;
+	assert.equal(group.needsAnimation(), false);
 });
 
 test("详情窗口展示完整输出，滚动可以从尾部移回开头", () => {
