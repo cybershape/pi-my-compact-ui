@@ -88,15 +88,17 @@ test("分组保持条目顺序，忽略空思考，思考只能有一个 owner",
 	assert.equal((call as any)[PARENT_KEY], undefined);
 });
 
-test("折叠和展开渲染遵守宽度、单条目无树头，预览受配置限制", () => {
+test("groups stay collapsed, preserve order, and respect rendering width", () => {
 	const group = new ToolGroupComponent();
-	group.addTool(tool("a", { content: [{ type: "text", text: Array.from({ length: 30 }, (_, i) => `row ${i}`).join("\n") }] }));
-	assert.ok(!group.render(60).join("\n").includes("tools done"));
+	const call = { ...tool("a", { content: [{ type: "text", text: "result body" }] }),
+		setExpanded() { assert.fail("native tools must not be expanded"); },
+	};
+	group.addTool(call);
+	const collapsed = group.render(60);
+	assert.ok(!collapsed.join("\n").includes("tools done"));
+	assert.ok(!collapsed.join("\n").includes("result body"));
 	group.setExpanded(true);
-	const expanded = group.render(60);
-	assert.ok(expanded.join("\n").includes("row 0"));
-	assert.ok(expanded.join("\n").includes("..."));
-	assert.ok(!expanded.join("\n").includes("row 29"));
+	assert.deepEqual(group.render(60), collapsed);
 	for (const width of [1, 8, 20, 80]) assert.ok(group.render(width).every((line) => visibleWidth(line) <= width));
 	group.addThinking(thinking("after tool"));
 	group.setExpanded(false);

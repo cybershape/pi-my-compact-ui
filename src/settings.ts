@@ -8,22 +8,6 @@ import { runtime } from "./state.js";
 
 export const CONFIG_KEYS = [
 	{
-		id: "expandedToolLines",
-		label: "Expanded tool lines",
-		description: "Result lines shown per tool when expanded",
-		min: 1,
-		max: 50,
-		step: 1,
-	},
-	{
-		id: "expandedThinkingLines",
-		label: "Expanded thinking lines",
-		description: "Thinking lines shown when expanded",
-		min: 1,
-		max: 100,
-		step: 1,
-	},
-	{
 		id: "maxGroupEntries",
 		label: "Max collapsed entries",
 		description: "Maximum entries shown in collapsed group",
@@ -91,7 +75,7 @@ export function registerConfigCommand(pi: ExtensionAPI): void {
 			// Non-TUI modes (print/json) can't show the interactive menu.
 			if (!ctx.hasUI) {
 				ctx.ui.notify(
-					`compact: expandedToolLines=${config.expandedToolLines}, expandedThinkingLines=${config.expandedThinkingLines}`,
+					`compact: maxGroupEntries=${config.maxGroupEntries}`,
 					"info",
 				);
 				return;

@@ -8,7 +8,6 @@ import type { Container, Markdown } from "@earendil-works/pi-tui";
 import { AssistantMessageComponent } from "@earendil-works/pi-coding-agent";
 import { ASSISTANT_THINKING_PATCH_KEY, LIVE_ASSISTANT_KEY, IS_STREAMING_COMP, GROUP_MOUNT, PARENT_KEY } from "./constants.js";
 import { isAssistantMessage, isContainer, isToolGroup, isMarkdown, isSpacer, isText } from "./guards.js";
-import { installVisibleAssistantMarkdownRendering } from "./markdown.js";
 
 export function thinkingAlreadyShown(text: string): boolean {
 	const norm = text.trim();
@@ -319,18 +318,6 @@ export function insertAnchoredGroup(container: Container, ordinal: number, group
 	placeAnchoredGroupBeforeText(container, target, group);
 }
 
-export function installAssistantExpansion(component: AssistantMessageComponent, contentContainer: Container): void {
-	// Ctrl+O only visits top-level chat children. Once compact groups are
-	// anchored inside an AssistantMessageComponent, make that top-level
-	// component expandable and delegate the state to its nested groups.
-	(component as any).setExpanded = (expanded: boolean) => {
-		const state = runtime.assistantContentStates.get(contentContainer);
-		if (!state) return;
-		for (const group of state.anchors.values()) group.setExpanded(expanded);
-		contentContainer.invalidate();
-	};
-}
-
 export function anchorGroupBeforeCurrentText(group: ToolGroupComponent, ordinal: number): void {
 	if (!runtime.lastStreamingComp || !runtime.lastChatContainer) return;
 	const contentContainer = (runtime.lastStreamingComp as any).contentContainer;
@@ -370,7 +357,6 @@ export function anchorGroupBeforeCurrentText(group: ToolGroupComponent, ordinal:
 
 export function restoreAssistantAnchor(parent: any, component: any): void {
 	if (!runtime.assistantContentContainers.has(parent) || !isVisibleTextMarkdown(component)) return;
-	installVisibleAssistantMarkdownRendering(component);
 	const state = getAssistantContentState(parent);
 	const ordinal = state.nextTextOrdinal++;
 	const group = state.anchors.get(ordinal);
@@ -405,7 +391,6 @@ export function stripAssistantPhantomPadding(parent: any, component: any): void 
 	if (isAssistantMessage(parent) && isContainer(component) && !isAssistantMessage(component)) {
 		runtime.assistantContentContainers.add(component);
 		getAssistantContentState(component);
-		installAssistantExpansion(parent, component);
 		return;
 	}
 	if (!runtime.assistantContentContainers.has(parent)) return;

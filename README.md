@@ -24,18 +24,8 @@ glyph is a spinner while the entry is still streaming:
 └  ⠋ thinking The assertion is off by one…
 ```
 
-Expand the group to inspect tool arguments, result previews, and more of the
-reasoning content:
-
-```text
-✓ tools done
-├─ ✓ thinking (1.2k)
-│   The validation path now handles expired sessions…
-├─ ✓ read: src/auth.ts (0.1s)
-│   export async function authenticate() { …
-└─ ✓ edit: src/auth.ts (0.2s)
-    Updated src/auth.ts
-```
+Groups always stay collapsed. Press `Ctrl+I` to inspect full tool arguments,
+results, or reasoning content in a detail modal.
 
 ## Features
 
@@ -46,14 +36,12 @@ reasoning content:
 - Removes Pi's native hidden-thinking placeholder components so an empty
   thinking label cannot leave phantom blank rows in the transcript.
 - Supports streaming reasoning, streaming tool output, and parallel tool calls.
-- Displays tool state, argument summaries, elapsed time, and result previews.
+- Displays tool state, argument summaries, elapsed time, and reasoning summaries.
 - Shows reasoning-token usage. During streaming it uses an estimate, then
   prefers provider-reported usage when available.
-- Follows Pi's standard `Ctrl+O` expand and collapse behavior.
+- Keeps reasoning and tool groups collapsed, including when Pi toggles `Ctrl+O`.
 - Press `Ctrl+I` (or run `/compact-inspect`) to interactively select any tool call or thinking run with `↑`/`↓` and press `Enter` to pop up a centered modal showing full details. Press `Esc` or `q` to close.
-- Renders fenced code blocks as subtle theme-aware background panels with
-  syntax highlighting and one character of horizontal padding instead of
-  decorative top and bottom border rows.
+- Leaves assistant Markdown and code-block rendering to Pi's native theme.
 - Preserves Pi's native execution semantics for `read`, `bash`, `powershell`, `edit`,
   `write`, `find`, `grep`, and `ls`.
 - Gives compaction summaries a distinct, compact presentation.
@@ -88,8 +76,7 @@ Available settings:
 
 | Setting | Default | Purpose |
 |---|---:|---|
-| `expandedToolLines` | `5` | Result-preview lines shown for each expanded tool |
-| `expandedThinkingLines` | `10` | Reasoning-preview lines shown for each expanded reasoning run |
+| `maxGroupEntries` | `5` | Maximum visible entries in a collapsed group |
 
 The configuration is stored at:
 
@@ -101,8 +88,7 @@ Example:
 
 ```json
 {
-  "expandedToolLines": 5,
-  "expandedThinkingLines": 10
+  "maxGroupEntries": 5
 }
 ```
 
@@ -110,7 +96,7 @@ Example:
 
 | Action | Key |
 |---|---|
-| Expand or collapse reasoning and tool groups | `Ctrl+O` |
+| Inspect reasoning and tool details | `Ctrl+I` or `/compact-inspect` |
 | Move through the settings menu | `Up` / `Down` |
 | Adjust a numeric value | `Left` / `Right`, `-` / `+` |
 | Save a setting | `Enter` |
@@ -136,32 +122,46 @@ Its main responsibilities are:
 > control their presentation. Actual execution is still delegated to Pi's
 > native tool implementations.
 
-## 开发与测试
+## Development and Testing
 
-公开入口仍为 `index.ts`，实现按职责拆分在 `src/`：
+The public entry point is `index.ts`; implementations are split by responsibility in `src/`.
+The build produces only the bundled `dist/extension.ts` declared in `pi.extensions`
+and its source map. No JavaScript library entry or type declarations are published.
+The TypeScript extension entry uses Pi's jiti transformation and host virtual
+modules, avoiding a native ESM import of a second Pi installation. External Pi
+dependencies are not bundled.
+Pi packages are optional peers requiring `^1.0.3`, so installing the extension
+does not automatically install another Pi. Local development and tests use the
+same version range through development dependencies.
 
-| 模块 | 职责 |
+| Module | Responsibility |
 |---|---|
-| `config.ts` / `settings.ts` | 配置读写与交互式设置；读写器可注入，测试不写入用户配置 |
-| `helpers.ts` / `types.ts` / `constants.ts` | 格式化、流式参数解析、共享类型和常量 |
-| `state.ts` | 集中管理运行状态；`createRuntimeState()` 创建独立状态快照 |
-| `thinking.ts` / `streaming-tools.ts` | 思考生命周期、工具占位行和执行时间 |
-| `tool-group.ts` / `markdown.ts` / `compaction.ts` / `modals.ts` | 分组、代码块、压缩摘要与弹窗渲染 |
-| `guards.ts` / `grouping.ts` / `assistant-patches.ts` | 组件识别、分组、正文锚点与 Pi 原生组件适配 |
-| `animation.ts` / `extension.ts` | 动画调度、命令与事件接入 |
+| `config.ts` / `settings.ts` | Configuration persistence and interactive settings with injectable filesystem access |
+| `helpers.ts` / `types.ts` / `constants.ts` | Formatting, streaming argument parsing, shared types and constants |
+| `state.ts` | Runtime state; `createRuntimeState()` creates independent state snapshots |
+| `thinking.ts` / `streaming-tools.ts` | Reasoning lifecycle, tool placeholders, and execution timing |
+| `tool-group.ts` / `compaction.ts` / `modals.ts` | Collapsed groups, compaction summaries, and detail modals |
+| `guards.ts` / `grouping.ts` / `assistant-patches.ts` | Component detection, grouping, text anchors, and native Pi integration |
+| `animation.ts` / `extension.ts` | Animation scheduling, commands, and events |
 
 ```bash
-npm run typecheck  # 严格 TypeScript 检查，包含源码和测试
-npm test           # 编译到 .test-build/，使用 Node 内置测试框架
-npm run check      # 类型检查 + 全部测试，CI 和发布前自动执行
+npm run typecheck  # Strict TypeScript checks for source and tests
+npm test           # Build and run the Node.js test suite
+npm run check      # Typecheck and all tests; also used by CI and before publishing
 ```
 
-测试位于 `tests/`，覆盖纯逻辑、配置与数值编辑器、ANSI/中文代码块、
-分组与弹窗、流式事件顺序、正文封组、历史锚点、热重载，以及 Pi 实际
-TypeScript 扩展加载器。测试无需新增依赖；`.test-build/` 不进入版本控制或发布包。
+`npm test` builds the extension before compiling and running the tests. CI and the
+publish workflow therefore use `npm run check` without a separate build step.
 
-涉及真实终端的改动还需手动验证：通过 `pi -e ./index.ts` 加载，检查流式
-思考与并行工具、正文切换、`Ctrl+O` 展开、`Ctrl+I` 弹窗、设置保存和 `/reload`。
+Tests in `tests/` cover helpers, configuration, numeric editors, collapsed groups,
+modals, streaming event order, text boundaries, historical anchors, hot reload,
+native assistant Markdown, Pi's actual extension loader, and bundled-loader host
+component identity. Tests require no new
+dependencies; `.test-build/` is not committed or published.
+
+Terminal changes also require manual verification with `pi -e ./index.ts`: check
+streaming reasoning, parallel tools, text boundaries, groups staying collapsed
+under `Ctrl+O`, `Ctrl+I` modals, settings persistence, and `/reload`.
 
 ## License
 

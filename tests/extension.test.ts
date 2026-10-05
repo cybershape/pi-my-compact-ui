@@ -57,7 +57,7 @@ test("无 UI 模式下配置命令只通知，不打开编辑器", async () => {
 		},
 	});
 	assert.equal(notifications.length, 1);
-	assert.ok(notifications[0]!.includes("expandedToolLines="));
+	assert.ok(notifications[0]!.includes("maxGroupEntries="));
 });
 
 test("session_start 捕获 TUI，Tab 不触发弹窗，扩展 Ctrl+I 可以打开并关闭选择器", async () => {
@@ -134,6 +134,21 @@ test("累积正文更新不重复封组，组件重建保留唯一锚点与确�
 	assert.ok(content.children[index - 1] instanceof Spacer);
 	assert.ok(content.children[index + 1] instanceof Spacer);
 	assert.ok(isMarkdown(content.children[index + 2]));
+});
+
+test("assistant Markdown keeps its native theme and renderer", () => {
+	const customTheme = {} as any;
+	const assistant = new AssistantMessageComponent(message([
+		{ type: "thinking", thinking: "plan" },
+		{ type: "text", text: "```ts\nconst answer = 42;\n```" },
+	]), false, customTheme);
+	const content = (assistant as any).contentContainer as Container;
+	const markdown = content.children.find(isMarkdown) as any;
+	assert.ok(markdown);
+	assert.equal(markdown.theme, customTheme);
+	assert.equal(Object.hasOwn(markdown, "render"), false);
+	assert.equal(Object.hasOwn(assistant, "setExpanded"), false);
+	assert.equal(content.children.filter((child) => child instanceof ToolGroupComponent).length, 1);
 });
 
 test("同一 assistant 多个思考段各自独立，消息切换不继承 reasoning usage", async () => {

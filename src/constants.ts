@@ -19,8 +19,6 @@ export const PARENT_KEY = Symbol.for("compact-ui.group-parent");
 
 export const PATCH_KEY = Symbol.for("compact-ui.group-patch");
 
-export const MARKDOWN_RENDER_PATCH_KEY = Symbol.for("compact-ui.markdown-render-patch");
-
 export const COMPACTION_STYLE_PATCH_KEY = Symbol.for("compact-ui.compaction-style-patch");
 
 export const ASSISTANT_THINKING_PATCH_KEY = Symbol.for("compact-ui.assistant-thinking-patch");
@@ -32,5 +30,3 @@ export const GROUP_MOUNT = Symbol.for("compact-ui.group-mount");
 export const TOOL_RENDER_PATCH_KEY = Symbol.for("compact-ui.tool-render-patch");
 
 export const LIVE_ASSISTANT_KEY = Symbol.for("compact-ui.live-assistant");
-
-export const CODE_BLOCK_PADDING_X = 1;

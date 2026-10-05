@@ -1,4 +1,4 @@
-/** 思考、工具、预览与组件补丁的共享类型。 */
+/** Shared types for thinking, tools, and component patches. */
 import type { ToolGroupComponent } from "./tool-group.js";
 
 export type ThinkingEntry = {
@@ -25,14 +25,6 @@ export type PreparingTool = {
 	_preparing: true;
 	_contentIndex: number;
 	owner: ToolGroupComponent | null;
-};
-
-export type MarkdownPreview = {
-	source: string;
-	width: number;
-	maxLines: number;
-	lines: string[];
-	truncated: boolean;
 };
 
 export type PatchState = {

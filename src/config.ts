@@ -1,11 +1,11 @@
-/** 配置持久化；通过可注入的读写器隔离文件系统。 */
+/** Persist configuration with injectable filesystem access. */
 import { join } from "path";
 import { homedir } from "os";
 import { readFileSync, writeFileSync } from "fs";
 
 export const CONFIG_PATH = join(homedir(), ".pi", "agent", "compact-ui.json");
 
-export const DEFAULT_CONFIG = { expandedToolLines: 5, expandedThinkingLines: 10, maxGroupEntries: 5 };
+export const DEFAULT_CONFIG = { maxGroupEntries: 5 };
 
 export const config = loadConfig(CONFIG_PATH);
 
@@ -24,7 +24,8 @@ export function saveConfig(
 /** Read configuration without coupling tests to the user's filesystem. */
 export function loadConfig(path: string, read: (path: string, encoding: 'utf-8') => string = readFileSync): typeof DEFAULT_CONFIG {
 	try {
-		return { ...DEFAULT_CONFIG, ...JSON.parse(read(path, 'utf-8')) };
+		const loaded = JSON.parse(read(path, 'utf-8'));
+		return { maxGroupEntries: loaded.maxGroupEntries ?? DEFAULT_CONFIG.maxGroupEntries };
 	} catch {
 		return { ...DEFAULT_CONFIG };
 	}

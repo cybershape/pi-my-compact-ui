@@ -4,14 +4,19 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from "../src/config.js";
 import { makeStepper } from "../src/settings.js";
 
-test("配置读取合并默认值，不修改默认配置", () => {
+test("configuration loads the collapsed entry limit without changing defaults", () => {
 	const loaded = loadConfig("unused", (path, encoding) => {
 		assert.equal(path, "unused");
 		assert.equal(encoding, "utf-8");
-		return '{"expandedToolLines":12}';
+		return '{"maxGroupEntries":12}';
 	});
-	assert.deepEqual(loaded, { expandedToolLines: 12, expandedThinkingLines: 10, maxGroupEntries: 5 });
-	assert.deepEqual(DEFAULT_CONFIG, { expandedToolLines: 5, expandedThinkingLines: 10, maxGroupEntries: 5 });
+	assert.deepEqual(loaded, { maxGroupEntries: 12 });
+	assert.deepEqual(DEFAULT_CONFIG, { maxGroupEntries: 5 });
+});
+
+test("obsolete expansion settings are ignored when reading legacy configuration", () => {
+	assert.deepEqual(loadConfig("unused", () => '{"expandedToolLines":12,"expandedThinkingLines":20,"maxGroupEntries":7}'), { maxGroupEntries: 7 });
+	assert.deepEqual(loadConfig("unused", () => '{"expandedToolLines":12}'), DEFAULT_CONFIG);
 });
 
 test("缺失或损坏的配置返回独立的默认值副本", () => {
@@ -20,8 +25,8 @@ test("缺失或损坏的配置返回独立的默认值副本", () => {
 	assert.deepEqual(missing, DEFAULT_CONFIG);
 	assert.deepEqual(invalid, DEFAULT_CONFIG);
 	assert.notEqual(missing, invalid);
-	missing.expandedToolLines = 9;
-	assert.equal(DEFAULT_CONFIG.expandedToolLines, 5);
+	missing.maxGroupEntries = 9;
+	assert.equal(DEFAULT_CONFIG.maxGroupEntries, 5);
 });
 
 test("配置保存采用可注入的写入器，不触碰真实配置文件", () => {
