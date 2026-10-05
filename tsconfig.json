@@ -17,5 +17,6 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["index.ts", "src/**/*.ts", "tests/**/*.ts"]
+  "include": ["index.ts", "src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist", ".test-build"]
 }
