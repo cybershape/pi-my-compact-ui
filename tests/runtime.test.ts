@@ -430,6 +430,56 @@ test("历史会话条目恢复真实工具耗时，且已完成工具不再随 D
 	assert.equal(toolElapsed(unknownTool), "0ms");
 });
 
+test("a single completed tool keeps its checkmark under an animated waiting header", () => {
+	const group = new ToolGroupComponent();
+	group.addTool(tool("single", { content: [] }));
+	runtime.groups.add(group);
+	runtime.lastActiveGroup = group;
+	for (const [phase, label] of [
+		["waiting-response", "waiting for response..."],
+		["waiting-output", "waiting for next output..."],
+		["working", "working..."],
+	] as const) {
+		runtime.agentWorkPhase = phase;
+		const rows = stripTerminalSequences(group.render(80).join("\n"));
+		assert.ok(rows.includes(label));
+		assert.ok(rows.includes("✓ bash"));
+		assert.equal(group.needsAnimation(), true);
+		for (const width of [1, 8, 20, 80]) {
+			assert.ok(group.render(width).every((line) => visibleWidth(line) <= width));
+		}
+	}
+	runtime.agentWorkPhase = null;
+	assert.equal(group.needsAnimation(), false);
+	assert.ok(!group.render(80).join("\n").includes("working..."));
+});
+
+test("waiting phases affect only the current open group and never override active entries", () => {
+	const previous = new ToolGroupComponent();
+	previous.addTool(tool("previous", {}));
+	previous.addTool(tool("previous-2", {}));
+	const current = new ToolGroupComponent();
+	current.addTool(tool("current", {}));
+	current.addTool(tool("current-2", {}));
+	runtime.lastActiveGroup = current;
+	runtime.agentWorkPhase = "waiting-response";
+	assert.ok(previous.render(80).join("\n").includes("tools done"));
+	assert.equal(previous.needsAnimation(), false);
+	assert.ok(current.render(80).join("\n").includes("waiting for response..."));
+	const pending = tool("pending");
+	current.addTool(pending);
+	assert.ok(current.render(80).join("\n").includes("tool calling..."));
+	current.removeTool(pending);
+	const active = thinking("active", true);
+	current.addThinking(active);
+	assert.ok(current.render(80).join("\n").includes("thinking..."));
+	active.active = false;
+	current.sealed = true;
+	assert.ok(current.render(80).join("\n").includes("done"));
+	assert.ok(!current.render(80).join("\n").includes("waiting"));
+	assert.equal(current.needsAnimation(), false);
+});
+
 test("封组后的历史组 needsAnimation 为 false，避免后台死循环刷新", () => {
 	const group = new ToolGroupComponent();
 	group.addTool({ toolCallId: "t1", toolName: "bash", result: {} });

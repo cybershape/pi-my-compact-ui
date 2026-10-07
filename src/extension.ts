@@ -4,12 +4,18 @@ import { installGrouping, ensureThinkingGroup, flushPendingTextSeal } from "./gr
 import { installNativeThinkingSuppression, removeGroupFromContainer, insertTurnDivider } from "./assistant-patches.js";
 import { installCompactionSummaryRendering } from "./compaction.js";
 import { openInspectSelectorModal, closeDetailModal, closeInspectSelectorModal } from "./modals.js";
-import { runtime } from "./state.js";
+import { runtime, type RuntimeState } from "./state.js";
 import { isKeyRelease, matchesKey, Key } from "@earendil-works/pi-tui";
 import { isCtrlI } from "./helpers.js";
 import { rememberToolStart, clearPreparingTools, noteStreamingToolCall, loadSessionToolTimings } from "./streaming-tools.js";
 import { finalizeActiveThinking, createThinkingEntry, updateActiveThinkingTokens, refreshSealedThinkingTokens } from "./thinking.js";
 import { registerConfigCommand } from "./settings.js";
+
+function setAgentWorkPhase(phase: RuntimeState["agentWorkPhase"]): void {
+	runtime.agentWorkPhase = phase;
+	runtime.lastActiveGroup?.invalidate();
+	runtime.capturedTui?.requestRender?.();
+}
 
 export default function (pi: ExtensionAPI) {
 	installGrouping();
@@ -28,6 +34,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		runtime.agentWorkPhase = null;
 		runtime.currentTheme = ctx.ui.theme;
 		runtime.activeUIContext = ctx.ui;
 		ctx.ui.setHiddenThinkingLabel("");
@@ -97,19 +104,34 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
+		setAgentWorkPhase(null);
 		closeDetailModal();
 		closeInspectSelectorModal();
+	});
+
+	pi.on("agent_start", async () => {
+		setAgentWorkPhase("working");
+	});
+
+	pi.on("turn_start", async () => {
+		setAgentWorkPhase("waiting-response");
+	});
+
+	pi.on("turn_end", async () => {
+		setAgentWorkPhase("working");
 	});
 
 	pi.on("tool_execution_start", async (event) => {
 		// Keep the timestamp captured when arguments started streaming.
 		rememberToolStart(event.toolCallId);
+		runtime.agentWorkPhase = "working";
 		runtime.lastActiveGroup?.invalidate();
 		runtime.activeSelectorComponent?.refreshEntries();
 		runtime.capturedTui?.requestRender?.();
 	});
 
 	pi.on("tool_execution_end", async (event) => {
+		runtime.agentWorkPhase = "working";
 		const end = Date.now();
 		const start = runtime.toolStarts.get(event.toolCallId);
 		if (start !== undefined && !runtime.toolDurations.has(event.toolCallId)) {
@@ -171,7 +193,19 @@ export default function (pi: ExtensionAPI) {
 			// Do not insert early thinking beside the previous assistant message.
 			// The addChild patch fills this with the current streaming component.
 			runtime.lastStreamingComp = null;
+			setAgentWorkPhase("waiting-response");
 		}
+	});
+
+	pi.on("message_end", async (event) => {
+		const msg = event.message as any;
+		if (msg?.role !== "assistant") return;
+		// Providers emit message_end rather than a done message_update.
+		if (runtime.activeThinking) updateActiveThinkingTokens(msg);
+		finalizeActiveThinking();
+		refreshSealedThinkingTokens(msg?.usage?.reasoning);
+		setAgentWorkPhase("working");
+		runtime.activeSelectorComponent?.refreshEntries();
 	});
 
 	pi.on("message_update", async (event) => {
@@ -190,6 +224,7 @@ export default function (pi: ExtensionAPI) {
 			// A thinking_end re-emitted after a visible text boundary already sealed
 			// this run must not create a second row for the same reasoning.
 			if (hasIndex && runtime.sealedThinkingIndexes.has(contentIndex)) return;
+			runtime.agentWorkPhase = streamType === "thinking_end" ? "waiting-output" : "working";
 			const startsRun =
 				streamType === "thinking_start" || !runtime.activeThinking || (hasIndex && runtime.activeThinkingIndex !== contentIndex);
 			if (startsRun) {
@@ -212,6 +247,7 @@ export default function (pi: ExtensionAPI) {
 			ensureThinkingGroup();
 			if (streamType === "thinking_end") finalizeActiveThinking();
 		} else if (streamType.startsWith("text_")) {
+			runtime.agentWorkPhase = "working";
 			const contentIndex = Number(streamEvent.contentIndex);
 			const block = Number.isInteger(contentIndex) ? content[contentIndex] : undefined;
 			const text = block?.type === "text" ? String(block.text ?? "").trim() : "";
@@ -228,10 +264,12 @@ export default function (pi: ExtensionAPI) {
 				flushPendingTextSeal();
 			}
 		} else if (streamType.startsWith("toolcall_")) {
+			runtime.agentWorkPhase = "working";
 			// Arguments are still streaming. Show the busy row before execution starts.
 			if (runtime.activeThinking) updateActiveThinkingTokens(msg);
 			noteStreamingToolCall(content, streamEvent);
 		} else if (streamType === "done" || streamType === "error") {
+			runtime.agentWorkPhase = "working";
 			if (runtime.activeThinking) updateActiveThinkingTokens(msg);
 			finalizeActiveThinking();
 			refreshSealedThinkingTokens(msg?.usage?.reasoning);
@@ -245,6 +283,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_end", async () => {
+		runtime.agentWorkPhase = null;
 		// Turn finished: seal the final block so it stops spinning and shows a
 		// stable summary until the user starts the next turn.
 		clearPreparingTools();

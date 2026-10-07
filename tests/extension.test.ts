@@ -89,7 +89,7 @@ test("session_start 捕获 TUI，Tab 不触发弹窗，扩展 Ctrl+I 可以打�
 test("扩展保持命令和关键事件注册", () => {
 	assert.ok(commands.has("compact-inspect"));
 	assert.ok(commands.has("compact-ui-config"));
-	for (const name of ["session_start", "session_shutdown", "message_start", "message_update", "agent_end", "tool_execution_start", "tool_execution_end"]) assert.ok(handlers.has(name));
+	for (const name of ["session_start", "session_shutdown", "agent_start", "turn_start", "turn_end", "message_start", "message_update", "message_end", "agent_end", "tool_execution_start", "tool_execution_end"]) assert.ok(handlers.has(name));
 });
 
 test("流式思考、工具、正文保持顺序，迟到的 thinking_end 不产生重复行", async () => {
@@ -188,6 +188,130 @@ test("新用户消息与 agent_end 清理流式状态和空占位组", async () 
 	await emit("message_start", { message: { role: "user" } });
 	assert.equal(runtime.lastStreamingComp, null);
 	assert.equal(runtime.pendingTextSeal, false);
+});
+
+test("open groups track tool completion, response waiting, thinking, and subsequent output", async () => {
+	await emit("agent_start");
+	await emit("turn_start");
+	await emit("message_start", { message: { role: "user" } });
+	assert.equal(runtime.agentWorkPhase, "waiting-response");
+	await emit("message_start", { message: { role: "assistant" } });
+	mountLiveAssistant();
+	const blocks = [
+		{ type: "thinking", thinking: "first plan" },
+		{ type: "toolCall", id: "work-call", name: "read", arguments: { path: "a.ts" } },
+	];
+	await update(blocks, "thinking_start", 0);
+	await update(blocks, "thinking_end", 0);
+	const group = runtime.lastActiveGroup!;
+	assert.ok(group.render(80).join("\n").includes("waiting for next output..."));
+	await update(blocks, "toolcall_start", 1);
+	assert.ok(group.render(80).join("\n").includes("tool calling..."));
+	const call = { toolName: "read", toolCallId: "work-call", args: { path: "a.ts" }, result: undefined as unknown };
+	group.addTool(call);
+	await emit("message_end", { message: message(blocks) });
+	await emit("tool_execution_start", { toolCallId: call.toolCallId });
+	assert.ok(group.render(80).join("\n").includes("tool calling..."));
+	call.result = { content: [] };
+	await emit("tool_execution_end", { toolCallId: call.toolCallId });
+	assert.ok(group.render(80).join("\n").includes("working..."));
+	assert.equal(group.sealed, false);
+	assert.equal(group.needsAnimation(), true);
+	await emit("turn_end");
+	await emit("turn_start");
+	assert.ok(group.render(80).join("\n").includes("waiting for response..."));
+	await emit("message_start", { message: { role: "assistant" } });
+	mountLiveAssistant();
+	assert.ok(group.render(80).join("\n").includes("waiting for response..."));
+	const nextBlocks = [{ type: "thinking", thinking: "" }];
+	await update(nextBlocks, "thinking_start", 0);
+	assert.ok(group.render(80).join("\n").includes("waiting for first token"));
+	nextBlocks[0]!.thinking = "next plan";
+	await update(nextBlocks, "thinking_delta", 0);
+	assert.ok(group.render(80).join("\n").includes("thinking..."));
+	await update(nextBlocks, "thinking_end", 0);
+	assert.ok(group.render(80).join("\n").includes("waiting for next output..."));
+	await emit("message_end", { message: message(nextBlocks, 40) });
+	assert.ok(group.render(80).join("\n").includes("working..."));
+	assert.equal(runtime.activeThinking, null);
+	await emit("agent_end");
+	assert.equal(runtime.agentWorkPhase, null);
+	assert.equal(group.sealed, true);
+	assert.equal(group.needsAnimation(), false);
+	assert.ok(group.render(80).join("\n").includes("done"));
+	assert.ok(!group.render(80).join("\n").includes("working..."));
+});
+
+test("thinking-only groups wait for subsequent output instead of another first token", async () => {
+	await emit("agent_start");
+	await emit("message_start", { message: { role: "assistant" } });
+	mountLiveAssistant();
+	const blocks = [{ type: "thinking", thinking: "plan" }];
+	await update(blocks, "thinking_start", 0);
+	await update(blocks, "thinking_end", 0);
+	const group = runtime.lastActiveGroup!;
+	const rows = group.render(80).join("\n");
+	assert.ok(rows.includes("waiting for next output..."));
+	assert.ok(!rows.includes("waiting for first token"));
+	assert.equal(group.needsAnimation(), true);
+	await emit("message_end", { message: message(blocks) });
+	assert.ok(group.render(80).join("\n").includes("working..."));
+	await emit("turn_start");
+	assert.ok(group.render(80).join("\n").includes("waiting for response..."));
+});
+
+test("message_end finalizes unfinished thinking and enters generic work", async () => {
+	await emit("message_start", { message: { role: "assistant" } });
+	mountLiveAssistant();
+	const blocks = [{ type: "thinking", thinking: "unfinished plan" }];
+	await update(blocks, "thinking_start", 0);
+	const entry = runtime.activeThinking!;
+	await emit("message_end", { message: message(blocks, 75) });
+	assert.equal(entry.active, false);
+	assert.equal(entry.tokens, 75);
+	assert.equal(runtime.activeThinking, null);
+	assert.ok(runtime.lastActiveGroup!.render(80).join("\n").includes("working..."));
+	await emit("message_end", { message: { role: "toolResult" } });
+	assert.equal(runtime.agentWorkPhase, "working");
+});
+
+test("text seals the group without adding a response-generation state", async () => {
+	await emit("agent_start");
+	await emit("message_start", { message: { role: "assistant" } });
+	const { assistant } = mountLiveAssistant();
+	const blocks = [
+		{ type: "thinking", thinking: "first" },
+		{ type: "thinking", thinking: "second" },
+	];
+	await update(blocks, "thinking_start", 0);
+	await update(blocks, "thinking_end", 0);
+	await update(blocks, "thinking_start", 1);
+	await update(blocks, "thinking_end", 1);
+	const group = runtime.lastActiveGroup!;
+	const withText = [...blocks, { type: "text", text: "answer" }];
+	assistant.updateContent(message(withText), true);
+	await update(withText, "text_delta", 2);
+	assert.equal(group.sealed, true);
+	assert.equal(group.needsAnimation(), false);
+	const completedRows = group.render(80);
+	assert.ok(!completedRows.join("\n").includes("waiting"));
+	assert.ok(!completedRows.join("\n").includes("generating response"));
+	await update(withText, "thinking_end", 1);
+	assert.equal(runtime.agentWorkPhase, "working");
+	await emit("turn_start");
+	assert.deepEqual(group.render(80), completedRows);
+});
+
+test("stream errors and shutdown clear stale waiting states", async () => {
+	await emit("message_start", { message: { role: "assistant" } });
+	mountLiveAssistant();
+	const blocks = [{ type: "thinking", thinking: "plan" }];
+	await update(blocks, "thinking_start", 0);
+	await update(blocks, "thinking_end", 0);
+	await update(blocks, "error", 0);
+	assert.ok(runtime.lastActiveGroup!.render(80).join("\n").includes("working..."));
+	await emit("session_shutdown");
+	assert.equal(runtime.agentWorkPhase, null);
 });
 
 test("历史消息按正文 ordinal 重建思考锚点，重复重建幂等", () => {

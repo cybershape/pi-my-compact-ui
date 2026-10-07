@@ -94,10 +94,21 @@ export class ToolGroupComponent extends Container {
 		return this.getVisibleEntries().some((entry) => entry.kind === "tool");
 	}
 
+	/** Only the latest open group may reflect work between streamed entries. */
+	private workPhaseLabel(): string | undefined {
+		if (this.sealed || runtime.lastActiveGroup !== this || this.hasPending() || this.hasActiveThinking()) return undefined;
+		switch (runtime.agentWorkPhase) {
+			case "waiting-response": return "waiting for response...";
+			case "waiting-output": return "waiting for next output...";
+			case "working": return "working...";
+			default: return undefined;
+		}
+	}
+
 	/** True while this group should keep its spinner animating. */
 	needsAnimation(): boolean {
 		if (this.sealed) return false;
-		return this.hasVisibleEntries() && (this.hasPending() || this.hasActiveThinking() || !this.hasTools());
+		return this.hasVisibleEntries() && (this.hasPending() || this.hasActiveThinking() || !!this.workPhaseLabel() || !this.hasTools());
 	}
 
 	private iconFor(tool: any, frame: string): string {
@@ -213,7 +224,9 @@ export class ToolGroupComponent extends Container {
 		const fg = (color: string, text: string) => theme?.fg?.(color, text) ?? text;
 		const frame = SPINNER[Math.floor((Date.now() - spinnerStart) / SPINNER_MS) % SPINNER.length]!;
 
-		if (visible.length === 1) {
+		const workPhaseLabel = this.workPhaseLabel();
+		// Waiting needs a header even for one completed entry; keep its completion mark.
+		if (visible.length === 1 && !workPhaseLabel) {
 			const entry = visible[0]!;
 			if (entry.kind === "tool") {
 				return [this.toolRow("", entry.tool, frame, width)];
@@ -234,7 +247,7 @@ export class ToolGroupComponent extends Container {
 		const hasTools = visible.some((e) => e.kind === "tool");
 		const hasThinking = visible.some((e) => e.kind === "thinking");
 		const openNoTools = !this.sealed && !hasTools;
-		const working = hasPendingTool || isThinking || openNoTools;
+		const working = hasPendingTool || isThinking || openNoTools || !!workPhaseLabel;
 
 		let state: string;
 		let stateColor: string;
@@ -242,6 +255,9 @@ export class ToolGroupComponent extends Container {
 		if (hasPendingTool) {
 			state = "tool calling...";
 			stateColor = "accent";
+		} else if (workPhaseLabel) {
+			state = workPhaseLabel;
+			stateColor = "thinkingText";
 		} else if (!hasTools) {
 			if (working) {
 				state = hasActiveThinkingTokens ? "thinking..." : "waiting for first token";

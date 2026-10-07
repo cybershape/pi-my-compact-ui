@@ -25,6 +25,8 @@ export interface RuntimeState {
 	toolStarts: Map<string, number>;
 	toolDurations: Map<string, number>;
 	turnStartMs: number;
+	/** Observable work between streamed thinking and tool execution. Null when inactive. */
+	agentWorkPhase: "working" | "waiting-response" | "waiting-output" | null;
 	preparingByIndex: Map<number, PreparingTool>;
 	activeModalHandle: OverlayHandle | null;
 	activeModalComponent: DetailModalComponent | null;
@@ -62,6 +64,7 @@ export function createRuntimeState(): RuntimeState {
 		toolStarts: new Map<string, number>(),
 		toolDurations: new Map<string, number>(),
 		turnStartMs: 0,
+		agentWorkPhase: null,
 		preparingByIndex: new Map<number, PreparingTool>(),
 		activeModalHandle: null,
 		activeModalComponent: null,
