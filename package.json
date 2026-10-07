@@ -1,6 +1,6 @@
 {
   "name": "pi-my-compact-ui",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "Compact tree-shaped reasoning and tool-call UI for the Pi Coding Agent",
   "author": "cybershape",
   "license": "MIT",

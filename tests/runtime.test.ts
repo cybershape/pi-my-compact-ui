@@ -340,6 +340,73 @@ test("工具参数开始流式输出时生成占位行，真实工具吸收参�
 	assert.equal(placeholder.owner, null);
 });
 
+test("argument reception survives placeholder migration and stops at toolcall_end", () => {
+	const parent = new Container();
+	const assistant = new Container();
+	parent.addChild(assistant);
+	runtime.lastChatContainer = parent;
+	runtime.lastStreamingComp = assistant;
+	noteStreamingToolCall([{ type: "toolCall", name: "bash", partialJson: "echo" }], { type: "toolcall_start", contentIndex: 0 });
+	const placeholder = runtime.preparingByIndex.get(0)!;
+	const group = placeholder.owner!;
+	group.addThinking(thinking("plan"));
+	assert.equal(placeholder._receivingArgs, true);
+	assert.ok(group.render(80).join("\n").includes("tool call receiving..."));
+	assert.equal(group.needsAnimation(), true);
+	const blocks = [{ type: "toolCall", id: "receiving-call", name: "bash", arguments: { command: "echo ok" } }];
+	noteStreamingToolCall(blocks, { type: "toolcall_delta", contentIndex: 0 });
+	const call = { ...tool("receiving-call"), argsComplete: false, executionStarted: false, _receivingArgs: undefined as boolean | undefined };
+	group.addTool(call);
+	assert.equal(call._receivingArgs, true);
+	assert.equal(placeholder.owner, null);
+	assert.equal(group.entries.filter((entry) => entry.kind === "tool").length, 1);
+	assert.ok(group.render(80).join("\n").includes("tool call receiving..."));
+	noteStreamingToolCall(blocks, { type: "toolcall_end", contentIndex: 0 });
+	assert.equal(call._receivingArgs, false);
+	assert.ok(group.render(80).join("\n").includes("tool calling..."));
+	call.executionStarted = true;
+	assert.ok(group.render(80).join("\n").includes("tool calling..."));
+});
+
+test("completed placeholder arguments are not mistaken for ongoing reception", () => {
+	const parent = new Container();
+	const assistant = new Container();
+	parent.addChild(assistant);
+	runtime.lastChatContainer = parent;
+	runtime.lastStreamingComp = assistant;
+	const blocks = [{ type: "toolCall", id: "complete-call", name: "read", arguments: { path: "a.ts" } }];
+	noteStreamingToolCall(blocks, { type: "toolcall_start", contentIndex: 0 });
+	const group = runtime.lastActiveGroup!;
+	group.addThinking(thinking("plan"));
+	noteStreamingToolCall(blocks, { type: "toolcall_end", contentIndex: 0 });
+	assert.equal(runtime.preparingByIndex.get(0)!._receivingArgs, false);
+	assert.ok(group.render(80).join("\n").includes("tool calling..."));
+	const call = { ...tool("complete-call"), argsComplete: false, _receivingArgs: undefined as boolean | undefined };
+	group.addTool(call);
+	assert.equal(call._receivingArgs, false);
+	assert.ok(group.render(80).join("\n").includes("tool calling..."));
+});
+
+test("executing tools take precedence over argument reception and partial output", () => {
+	const group = new ToolGroupComponent();
+	const receiving = { ...tool("receiving"), argsComplete: false, executionStarted: false };
+	const executing = { ...tool("executing"), executionStarted: true, isPartial: true, _receivingArgs: true };
+	group.addTool(receiving);
+	group.addThinking(thinking("plan"));
+	assert.ok(group.render(80).join("\n").includes("tool call receiving..."));
+	for (const width of [1, 8, 20, 80]) {
+		assert.ok(group.render(width).every((line) => visibleWidth(line) <= width));
+	}
+	group.addTool(executing);
+	assert.ok(group.render(80).join("\n").includes("tool calling..."));
+	executing.result = { content: [{ type: "text", text: "partial output" }] };
+	assert.ok(group.render(80).join("\n").includes("tool calling..."));
+	executing.isPartial = false;
+	assert.ok(group.render(80).join("\n").includes("tool call receiving..."));
+	receiving.argsComplete = true;
+	assert.ok(group.render(80).join("\n").includes("tool calling..."));
+});
+
 test("同名并行工具不能通过名称猜测匹配，ID 匹配才吸收", () => {
 	for (const index of [0, 1]) noteStreamingToolCall([
 		{ type: "toolCall", id: "a", name: "bash" }, { type: "toolCall", id: "b", name: "bash" },

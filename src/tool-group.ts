@@ -239,7 +239,11 @@ export class ToolGroupComponent extends Container {
 
 		const lines: string[] = [];
 
-		const hasPendingTool = visible.some((e) => e.kind === "tool" && toolStatus(e.tool) === "pending");
+		const pendingTools = visible.filter((e) => e.kind === "tool" && toolStatus(e.tool) === "pending");
+		const hasPendingTool = pendingTools.length > 0;
+		const receivingToolArgs = hasPendingTool && pendingTools.every(
+			(e) => e.kind === "tool" && !e.tool.executionStarted && (e.tool._receivingArgs ?? (e.tool.argsComplete === false)),
+		);
 		const isThinking = !this.sealed && visible.some((e) => e.kind === "thinking" && e.active);
 		const hasActiveThinkingTokens = visible.some(
 			(e) => e.kind === "thinking" && e.active && (e.tokens > 0 || e.text.trim().length > 0),
@@ -253,7 +257,7 @@ export class ToolGroupComponent extends Container {
 		let stateColor: string;
 
 		if (hasPendingTool) {
-			state = "tool calling...";
+			state = receivingToolArgs ? "tool call receiving..." : "tool calling...";
 			stateColor = "accent";
 		} else if (workPhaseLabel) {
 			state = workPhaseLabel;

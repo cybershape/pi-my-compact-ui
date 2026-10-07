@@ -206,9 +206,14 @@ test("open groups track tool completion, response waiting, thinking, and subsequ
 	const group = runtime.lastActiveGroup!;
 	assert.ok(group.render(80).join("\n").includes("waiting for next output..."));
 	await update(blocks, "toolcall_start", 1);
-	assert.ok(group.render(80).join("\n").includes("tool calling..."));
+	assert.ok(group.render(80).join("\n").includes("tool call receiving..."));
 	const call = { toolName: "read", toolCallId: "work-call", args: { path: "a.ts" }, result: undefined as unknown };
 	group.addTool(call);
+	assert.ok(group.render(80).join("\n").includes("tool call receiving..."));
+	await update(blocks, "toolcall_delta", 1);
+	assert.ok(group.render(80).join("\n").includes("tool call receiving..."));
+	await update(blocks, "toolcall_end", 1);
+	assert.ok(group.render(80).join("\n").includes("tool calling..."));
 	await emit("message_end", { message: message(blocks) });
 	await emit("tool_execution_start", { toolCallId: call.toolCallId });
 	assert.ok(group.render(80).join("\n").includes("tool calling..."));

@@ -31,6 +31,8 @@ export type PreparingTool = {
 	args: any;
 	isPartial: true;
 	_preparing: true;
+	/** True until the toolcall_end event completes argument reception. */
+	_receivingArgs: boolean;
 	_contentIndex: number;
 	owner: ToolGroupComponent | null;
 };

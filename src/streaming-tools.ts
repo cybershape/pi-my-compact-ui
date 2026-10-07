@@ -182,6 +182,7 @@ export function absorbPreparingTool(real: any): void {
 	const start = runtime.toolStarts.get(preparing.toolCallId);
 	if (start !== undefined && id && !runtime.toolStarts.has(id)) runtime.toolStarts.set(id, start);
 	real._contentIndex = preparing._contentIndex;
+	real._receivingArgs = preparing._receivingArgs;
 	if ((!real.args || Object.keys(real.args).length === 0) && preparing.args) real.args = preparing.args;
 	detachPreparingTool(preparing);
 }
@@ -198,10 +199,12 @@ export function noteStreamingToolCall(content: any[], streamEvent: any): void {
 	const id = String(block.id || "");
 	const name = String(block.name || "tool");
 	const args = streamingToolArgs(block);
+	const receivingArgs = streamEvent?.type !== "toolcall_end";
 	const existing = findGroupedTool(id, index);
 	if (existing && !existing._preparing) {
 		existing._contentIndex = index;
 		existing.args = args;
+		existing._receivingArgs = receivingArgs;
 		rememberToolStart(String(existing.toolCallId || id));
 		invalidateGroupedTool(existing);
 		return;
@@ -215,6 +218,7 @@ export function noteStreamingToolCall(content: any[], streamEvent: any): void {
 			args,
 			isPartial: true,
 			_preparing: true,
+			_receivingArgs: receivingArgs,
 			_contentIndex: index,
 			owner: null,
 		};
@@ -229,6 +233,7 @@ export function noteStreamingToolCall(content: any[], streamEvent: any): void {
 			if (start !== undefined && !runtime.toolStarts.has(id)) runtime.toolStarts.set(id, start);
 		}
 		preparing.args = args;
+		preparing._receivingArgs = receivingArgs;
 		if (!preparing.owner) attachPreparingTool(preparing);
 	}
 	rememberToolStart(preparing.toolCallId);
