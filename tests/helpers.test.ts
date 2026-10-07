@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { homedir } from "node:os";
 import {
-	estimateTextTokens, formatTokenK, formatWorkedTime, isCtrlI,
+	estimateTextTokens, formatTokenK, formatToolDuration, formatWorkedTime, isCtrlI,
 	locateStreamingToolCall, oneLine, shortenPath, streamingToolArgs,
 	thinkingTokenLabel, toolResultText, toolStatus, toolSummary,
 } from "../src/helpers.js";
@@ -80,6 +80,28 @@ test("工具调用定位支持索引、事件 ID 和仅事件块", () => {
 
 for (const [ms, expected] of [[0, "1s"], [1499, "1s"], [1500, "2s"], [60000, "1m"], [61000, "1m 1s"], [3600000, "1h"], [3660000, "1h 1m"]] as const) {
 	test(`耗时格式化 ${ms}ms`, () => assert.equal(formatWorkedTime(ms), expected));
+}
+
+for (const [sec, expected] of [
+	[0, "0ms"],
+	[0.0004, "0ms"],
+	[0.012, "12ms"],
+	[0.05, "50ms"],
+	[0.5, "500ms"],
+	[0.999, "999ms"],
+	[0.9996, "1.00s"],
+	[1.0, "1.00s"],
+	[1.04, "1.04s"],
+	[1.05, "1.05s"],
+	[2.25, "2.25s"],
+	[2.3, "2.30s"],
+	[4.2, "4.20s"],
+	[9.99, "9.99s"],
+	[10.0, "10.0s"],
+	[10.04, "10.0s"],
+	[12.46, "12.5s"],
+] as const) {
+	test(`工具耗时格式化 ${sec}s -> ${expected}`, () => assert.equal(formatToolDuration(sec), expected));
 }
 
 test("Ctrl+I 不抢占 Tab，支持扩展键盘协议并忽略释放事件", () => {

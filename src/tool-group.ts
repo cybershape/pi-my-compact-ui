@@ -58,7 +58,7 @@ export class ToolGroupComponent extends Container {
 		return this.entries.filter((entry) => {
 			if (entry.kind === "tool") return true;
 			if (entry.kind === "thinking") {
-				return entry.text.trim().length > 0;
+				return entry.active || entry.text.trim().length > 0;
 			}
 			return false;
 		});
@@ -82,10 +82,14 @@ export class ToolGroupComponent extends Container {
 		return this.getVisibleEntries().some((entry) => entry.kind === "thinking");
 	}
 
+	hasTools(): boolean {
+		return this.getVisibleEntries().some((entry) => entry.kind === "tool");
+	}
+
 	/** True while this group should keep its spinner animating. */
 	needsAnimation(): boolean {
 		if (this.sealed) return false;
-		return this.hasVisibleEntries() && (this.hasPending() || this.hasActiveThinking());
+		return this.hasVisibleEntries() && (this.hasPending() || this.hasActiveThinking() || !this.hasTools());
 	}
 
 	private iconFor(tool: any, frame: string): string {
@@ -106,7 +110,7 @@ export class ToolGroupComponent extends Container {
 		const leftHeader = isDim
 			? `${prefix}${fg("dim", this.iconFor(tool, frame))} ${fg("dim", s.name)}`
 			: `${prefix}${fg(this.colorFor(st), this.iconFor(tool, frame))} ${fg("toolTitle", bold(s.name))}`;
-		const right = fg(isDim ? "dim" : "muted", `(${toolElapsed(tool)}s)`);
+		const right = fg(isDim ? "dim" : "muted", `(${toolElapsed(tool)})`);
 		const rightLen = visibleWidth(right);
 		const headerLen = visibleWidth(leftHeader);
 
@@ -189,22 +193,36 @@ export class ToolGroupComponent extends Container {
 
 		const hasPendingTool = visible.some((e) => e.kind === "tool" && toolStatus(e.tool) === "pending");
 		const isThinking = !this.sealed && visible.some((e) => e.kind === "thinking" && e.active);
+		const hasActiveThinkingTokens = visible.some(
+			(e) => e.kind === "thinking" && e.active && (e.tokens > 0 || e.text.trim().length > 0),
+		);
 		const hasTools = visible.some((e) => e.kind === "tool");
 		const hasThinking = visible.some((e) => e.kind === "thinking");
 		const openNoTools = !this.sealed && !hasTools;
 		const working = hasPendingTool || isThinking || openNoTools;
-		const state = hasPendingTool
-			? "tool calling..."
-			: !hasTools
-				? working
-					? "thinking..."
-					: "thinking"
-				: isThinking
-					? "thinking..."
-					: hasThinking
-						? "tools and thinking done"
-						: "tools done";
-		const stateColor = hasPendingTool ? "accent" : hasTools && !isThinking ? "success" : "thinkingText";
+
+		let state: string;
+		let stateColor: string;
+
+		if (hasPendingTool) {
+			state = "tool calling...";
+			stateColor = "accent";
+		} else if (!hasTools) {
+			if (working) {
+				state = hasActiveThinkingTokens ? "thinking..." : "waiting for first token";
+				stateColor = "thinkingText";
+			} else {
+				state = "thinking";
+				stateColor = "thinkingText";
+			}
+		} else if (isThinking) {
+			state = hasActiveThinkingTokens ? "thinking..." : "waiting for first token";
+			stateColor = "thinkingText";
+		} else {
+			state = hasThinking ? "done" : "tools done";
+			stateColor = "success";
+		}
+
 		const thinkingSpin = !hasPendingTool && working ? thinkingSpinnerFrame() : undefined;
 		// Left icon: spinner while working, completion mark once the group is done.
 		const leftIcon = working ? (thinkingSpin?.frame ?? frame) : "✓";

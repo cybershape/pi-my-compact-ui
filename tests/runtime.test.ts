@@ -103,8 +103,95 @@ test("groups stay collapsed, preserve order, and respect rendering width", () =>
 	group.addThinking(thinking("after tool"));
 	group.setExpanded(false);
 	const rows = group.render(60).join("\n");
-	assert.ok(rows.includes("tools and thinking done"));
+	assert.ok(rows.includes("done"));
+	assert.ok(!rows.includes("tools and thinking done"));
 	assert.ok(rows.indexOf("bash") < rows.indexOf("after tool"));
+});
+
+test("group 标题状态覆盖：tool calling、thinking、waiting for first token 以及完成状态 done", () => {
+	const group = new ToolGroupComponent();
+	const runningTool: any = {
+		toolName: "bash",
+		toolCallId: "run_1",
+		args: { command: "sleep 1" },
+		isPartial: true,
+		executionStarted: true,
+		render: () => ["native"],
+		invalidate() {},
+	};
+	const doneTool = {
+		toolName: "read",
+		toolCallId: "read_1",
+		args: { path: "a.ts" },
+		result: { content: [] },
+		render: () => ["native"],
+		invalidate() {},
+	};
+
+	group.addTool(runningTool);
+	group.addTool(doneTool);
+
+	// 1. 存在未完成工具：tool calling...
+	assert.ok(group.render(80).join("\n").includes("tool calling..."));
+
+	// 2. 工具均已完成，且进入尚无 token 内容的流式思考：waiting for first token
+	runningTool.isPartial = false;
+	runningTool.result = { content: [] };
+	const activeThinking: ThinkingEntry = {
+		kind: "thinking",
+		id: 99,
+		text: "",
+		tokens: 0,
+		tokensExact: false,
+		active: true,
+		owner: null,
+	};
+	group.addThinking(activeThinking);
+	assert.ok(group.render(80).join("\n").includes("waiting for first token"));
+
+	// 3. 流式思考收到首批 token 内容：thinking...
+	activeThinking.text = "analyzing problem";
+	activeThinking.tokens = 5;
+	assert.ok(group.render(80).join("\n").includes("thinking..."));
+
+	// 4. 无工具的纯思考组在首个 token 到达前：waiting for first token
+	const thinkingGroup = new ToolGroupComponent();
+	const previousDoneThinking: ThinkingEntry = {
+		kind: "thinking",
+		id: 100,
+		text: "earlier step",
+		tokens: 10,
+		tokensExact: true,
+		active: false,
+		owner: null,
+	};
+	const earlyThinking: ThinkingEntry = {
+		kind: "thinking",
+		id: 101,
+		text: "",
+		tokens: 0,
+		tokensExact: false,
+		active: true,
+		owner: null,
+	};
+	thinkingGroup.addThinking(previousDoneThinking);
+	thinkingGroup.addThinking(earlyThinking);
+	assert.ok(thinkingGroup.render(80).join("\n").includes("waiting for first token"));
+
+	// 5. 封组完成且同时包含工具与思考：done
+	activeThinking.active = false;
+	activeThinking.text = "done analyzing";
+	group.sealed = true;
+	const finishedRows = group.render(80).join("\n");
+	assert.ok(finishedRows.includes("done"));
+	assert.ok(!finishedRows.includes("tools and thinking done"));
+
+	// 6. 封组完成且仅包含工具：tools done
+	const toolOnlyGroup = new ToolGroupComponent();
+	toolOnlyGroup.addTool(doneTool);
+	toolOnlyGroup.addTool({ ...doneTool, toolCallId: "read_2" });
+	toolOnlyGroup.sealed = true;
+	assert.ok(toolOnlyGroup.render(80).join("\n").includes("tools done"));
 });
 
 test("思考超长时使用 '...' 截断，与右侧信息之间保持单个空格且颜色与文本一致", () => {
@@ -264,7 +351,44 @@ test("同名并行工具不能通过名称猜测匹配，ID 匹配才吸收", ()
 
 test("工具完成后耗时冻结在结束时间", () => {
 	runtime.toolStarts.set("a", 1000);
-	assert.equal(toolElapsed({ toolCallId: "a", result: {}, _groupEndAt: 3250 }), "2.3");
+	assert.equal(toolElapsed({ toolCallId: "a", result: {}, _groupEndAt: 3250 }), "2.25s");
+});
+
+test("工具执行时间小于 1 秒时显示 ms 且不带小数点，1 至 10 秒显示两位小数，10 秒以上显示一位小数", () => {
+	runtime.toolStarts.set("short_1", 1000);
+	assert.equal(toolElapsed({ toolCallId: "short_1", result: {}, _groupEndAt: 1045 }), "45ms");
+
+	runtime.toolStarts.set("short_2", 1000);
+	assert.equal(toolElapsed({ toolCallId: "short_2", result: {}, _groupEndAt: 1500 }), "500ms");
+
+	runtime.toolStarts.set("short_3", 1000);
+	assert.equal(toolElapsed({ toolCallId: "short_3", result: {}, _groupEndAt: 1999 }), "999ms");
+
+	runtime.toolStarts.set("exact_1s", 1000);
+	assert.equal(toolElapsed({ toolCallId: "exact_1s", result: {}, _groupEndAt: 2000 }), "1.00s");
+
+	runtime.toolStarts.set("mid_sec", 1000);
+	assert.equal(toolElapsed({ toolCallId: "mid_sec", result: {}, _groupEndAt: 3350 }), "2.35s");
+
+	runtime.toolStarts.set("long_sec", 1000);
+	assert.equal(toolElapsed({ toolCallId: "long_sec", result: {}, _groupEndAt: 11500 }), "10.5s");
+
+	const group = new ToolGroupComponent();
+	group.addTool({
+		toolName: "bash",
+		toolCallId: "short_1",
+		args: { command: "echo fast" },
+		result: { content: [] },
+		_groupEndAt: 1045,
+		render: () => ["native"],
+		invalidate() {},
+	});
+
+	const rendered = group.render(80).join("\n");
+	const plain = stripTerminalSequences(rendered);
+	assert.ok(plain.includes("(45ms)"));
+	assert.ok(!plain.includes("(45.0ms)"));
+	assert.ok(!plain.includes("(0.0s)"));
 });
 
 test("历史会话条目恢复真实工具耗时，且已完成工具不再随 Date.now 刷新递增", () => {
@@ -294,15 +418,15 @@ test("历史会话条目恢复真实工具耗时，且已完成工具不再随 D
 	assert.equal(runtime.toolDurations.get("call_hist"), 4.2);
 
 	const histTool = { toolCallId: "call_hist", result: { content: [] } };
-	assert.equal(toolElapsed(histTool), "4.2");
+	assert.equal(toolElapsed(histTool), "4.20s");
 
 	// 再次调用耗时保持稳定，不随当前时间递增
-	assert.equal(toolElapsed(histTool), "4.2");
+	assert.equal(toolElapsed(histTool), "4.20s");
 
-	// 若工具已有 result 但无历史时间记录，冻结在 0.0s，绝不使用 Date.now 计时
+	// 若工具已有 result 但无历史时间记录，冻结在 0ms，绝不使用 Date.now 计时
 	const unknownTool = { toolCallId: "unknown", result: { content: [] } };
-	assert.equal(toolElapsed(unknownTool), "0.0");
-	assert.equal(toolElapsed(unknownTool), "0.0");
+	assert.equal(toolElapsed(unknownTool), "0ms");
+	assert.equal(toolElapsed(unknownTool), "0ms");
 });
 
 test("封组后的历史组 needsAnimation 为 false，避免后台死循环刷新", () => {

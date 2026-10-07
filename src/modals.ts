@@ -143,7 +143,7 @@ export class DetailModalComponent implements Component {
 			const st = toolStatus(tool);
 			const icon = st === "pending" ? frame : st === "error" ? "✗" : "✓";
 			const color = st === "pending" ? "accent" : st === "error" ? "error" : "success";
-			const elapsed = `(${toolElapsed(tool)}s)`;
+			const elapsed = `(${toolElapsed(tool)})`;
 			title = `${fg(color, icon)} ${fg("toolTitle", bold(tool.toolName))} ${fg("muted", elapsed)}`;
 
 			if (tool.toolName === "bash" || tool.toolName === "powershell") {
@@ -466,7 +466,7 @@ export class InspectSelectorModal implements Component {
 					const icon = st === "pending" ? frame : st === "error" ? "✗" : "✓";
 					const iconColor = st === "pending" ? "accent" : st === "error" ? "error" : "success";
 					const s = toolSummary(tool.toolName, tool.args);
-					const elapsed = `(${toolElapsed(tool)}s)`;
+					const elapsed = `(${toolElapsed(tool)})`;
 					const toolLabel = fg("toolTitle", bold(s.name));
 					const contentText = fg("dim", s.content || "...");
 					leftContent = `${prefix}${fg(iconColor, icon)} ${toolLabel} ${contentText}`;

@@ -118,6 +118,18 @@ export function formatWorkedTime(elapsedMs: number): string {
 	return `${seconds}s`;
 }
 
+export function formatToolDuration(durationSec: number): string {
+	const safeSec = Number.isFinite(durationSec) ? Math.max(0, durationSec) : 0;
+	const ms = Math.round(safeSec * 1000);
+	if (ms < 1000) {
+		return `${ms}ms`;
+	}
+	if (safeSec < 10) {
+		return `${safeSec.toFixed(2)}s`;
+	}
+	return `${safeSec.toFixed(1)}s`;
+}
+
 export function isCtrlI(data: string): boolean {
 	// Ignore key release events to prevent accidental toggling on key up
 	if (isKeyRelease(data)) {

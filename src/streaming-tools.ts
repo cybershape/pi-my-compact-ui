@@ -5,22 +5,24 @@ import { isToolGroup } from "./guards.js";
 import { ToolGroupComponent } from "./tool-group.js";
 import { detachGroup, noteGroupMount } from "./assistant-patches.js";
 import type { PreparingTool } from "./types.js";
-import { locateStreamingToolCall, streamingToolArgs } from "./helpers.js";
+import { formatToolDuration, locateStreamingToolCall, streamingToolArgs } from "./helpers.js";
+
+export { formatToolDuration } from "./helpers.js";
 
 export function toolElapsed(tool: any): string {
 	if (typeof tool?._elapsedDuration === "number") {
-		return tool._elapsedDuration.toFixed(1);
+		return formatToolDuration(tool._elapsedDuration);
 	}
 	const knownDuration = runtime.toolDurations.get(tool.toolCallId);
 	if (knownDuration !== undefined) {
 		tool._elapsedDuration = knownDuration;
-		return knownDuration.toFixed(1);
+		return formatToolDuration(knownDuration);
 	}
 	if (tool?._groupEndAt !== undefined) {
 		const start = runtime.toolStarts.get(tool.toolCallId) ?? tool._groupEndAt;
 		const dur = Math.max(0, (tool._groupEndAt - start) / 1000);
 		tool._elapsedDuration = dur;
-		return dur.toFixed(1);
+		return formatToolDuration(dur);
 	}
 	if (tool?.result) {
 		const resultTs = Number(tool.result?.timestamp);
@@ -28,16 +30,16 @@ export function toolElapsed(tool: any): string {
 		if (start && resultTs && resultTs >= start) {
 			const dur = (resultTs - start) / 1000;
 			tool._elapsedDuration = dur;
-			return dur.toFixed(1);
+			return formatToolDuration(dur);
 		}
 		tool._elapsedDuration = 0;
-		return "0.0";
+		return "0ms";
 	}
 	const start = runtime.toolStarts.get(tool.toolCallId);
 	if (start !== undefined) {
-		return Math.max(0, (Date.now() - start) / 1000).toFixed(1);
+		return formatToolDuration(Math.max(0, (Date.now() - start) / 1000));
 	}
-	return "0.0";
+	return "0ms";
 }
 
 export function rememberToolStart(toolCallId: string): void {
