@@ -225,7 +225,7 @@ test("open groups track tool completion, response waiting, thinking, and subsequ
 	assert.ok(group.render(80).join("\n").includes("waiting for response..."));
 	const nextBlocks = [{ type: "thinking", thinking: "" }];
 	await update(nextBlocks, "thinking_start", 0);
-	assert.ok(group.render(80).join("\n").includes("waiting for first token"));
+	assert.ok(group.render(80).join("\n").includes("waiting for first token..."));
 	nextBlocks[0]!.thinking = "next plan";
 	await update(nextBlocks, "thinking_delta", 0);
 	assert.ok(group.render(80).join("\n").includes("thinking..."));
@@ -252,7 +252,7 @@ test("thinking-only groups wait for subsequent output instead of another first t
 	const group = runtime.lastActiveGroup!;
 	const rows = group.render(80).join("\n");
 	assert.ok(rows.includes("waiting for next output..."));
-	assert.ok(!rows.includes("waiting for first token"));
+	assert.ok(!rows.includes("waiting for first token..."));
 	assert.equal(group.needsAnimation(), true);
 	await emit("message_end", { message: message(blocks) });
 	assert.ok(group.render(80).join("\n").includes("working..."));

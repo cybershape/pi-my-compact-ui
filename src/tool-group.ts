@@ -260,14 +260,14 @@ export class ToolGroupComponent extends Container {
 			stateColor = "thinkingText";
 		} else if (!hasTools) {
 			if (working) {
-				state = hasActiveThinkingTokens ? "thinking..." : "waiting for first token";
+				state = hasActiveThinkingTokens ? "thinking..." : "waiting for first token...";
 				stateColor = "thinkingText";
 			} else {
 				state = "thinking";
 				stateColor = "thinkingText";
 			}
 		} else if (isThinking) {
-			state = hasActiveThinkingTokens ? "thinking..." : "waiting for first token";
+			state = hasActiveThinkingTokens ? "thinking..." : "waiting for first token...";
 			stateColor = "thinkingText";
 		} else {
 			state = hasThinking ? "done" : "tools done";

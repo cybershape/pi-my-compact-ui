@@ -148,7 +148,7 @@ test("group 标题状态覆盖：tool calling、thinking、waiting for first tok
 		owner: null,
 	};
 	group.addThinking(activeThinking);
-	assert.ok(group.render(80).join("\n").includes("waiting for first token"));
+	assert.ok(group.render(80).join("\n").includes("waiting for first token..."));
 
 	// 3. 流式思考收到首批 token 内容：thinking...
 	activeThinking.text = "analyzing problem";
@@ -177,7 +177,7 @@ test("group 标题状态覆盖：tool calling、thinking、waiting for first tok
 	};
 	thinkingGroup.addThinking(previousDoneThinking);
 	thinkingGroup.addThinking(earlyThinking);
-	assert.ok(thinkingGroup.render(80).join("\n").includes("waiting for first token"));
+	assert.ok(thinkingGroup.render(80).join("\n").includes("waiting for first token..."));
 
 	// 5. 封组完成且同时包含工具与思考：done
 	activeThinking.active = false;
