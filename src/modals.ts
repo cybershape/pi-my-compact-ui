@@ -25,7 +25,10 @@ export class DetailModalComponent implements Component {
 		if (this.entry.kind === "thinking") {
 			return this.entry.active;
 		}
-		return toolStatus(this.entry.tool) === "pending";
+		if (this.entry.kind === "tool") {
+			return toolStatus(this.entry.tool) === "pending";
+		}
+		return false;
 	}
 
 	private startPollingIfNeeded(): void {
@@ -136,6 +139,19 @@ export class DetailModalComponent implements Component {
 							contentLines.push(fg("thinkingText", wl));
 						}
 					}
+				}
+			}
+		} else if (this.entry.kind === "notice") {
+			const icon = fg("warning", "!");
+			title = `${icon} ${fg("toolTitle", bold("cache miss"))}`;
+			const content = this.entry.text
+				.replace(/^cache miss\s*/i, "")
+				.replace(/^[:\s]+/, "")
+				.replace(/:/g, "")
+				.trim();
+			for (const rawLine of (content || this.entry.text).split("\n")) {
+				for (const wl of wrapTextWithAnsi(rawLine, innerWidth)) {
+					contentLines.push(fg("dim", wl));
 				}
 			}
 		} else {
@@ -471,6 +487,17 @@ export class InspectSelectorModal implements Component {
 					const contentText = fg("dim", s.content || "...");
 					leftContent = `${prefix}${fg(iconColor, icon)} ${toolLabel} ${contentText}`;
 					rightStr = fg("muted", elapsed);
+				} else if (entry.kind === "notice") {
+					const icon = fg("warning", "!");
+					const noticeLabel = fg("toolTitle", bold("cache miss"));
+					const content = entry.text
+						.replace(/^cache miss\s*/i, "")
+						.replace(/^[:\s]+/, "")
+						.replace(/:/g, "")
+						.trim();
+					const contentText = fg("dim", content);
+					leftContent = `${prefix}${icon} ${noticeLabel} ${contentText}`;
+					rightStr = "";
 				} else {
 					const spin = entry.active ? thinkingSpinnerFrame() : undefined;
 					const icon = spin?.frame ?? "✓";

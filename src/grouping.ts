@@ -4,10 +4,10 @@ import { ToolGroupComponent } from "./tool-group.js";
 import { thinkingAlreadyShown, isVisibleTextMarkdown, anchorGroupBeforeCurrentText, detachGroup, noteGroupMount, removeGroupFromContainer, ensureAssistantThinkingPatched, stripAssistantPhantomPadding, restoreAssistantAnchor, releaseAssistantAnchors, getAssistantContentState } from "./assistant-patches.js";
 import { runtime } from "./state.js";
 import { estimateTextTokens } from "./helpers.js";
-import { findOpenGroup, placeGroupAfter } from "./streaming-tools.js";
+import { findOpenGroup, openToolGroup, placeGroupAfter } from "./streaming-tools.js";
 import { finalizeActiveThinking } from "./thinking.js";
-import type { ThinkingEntry, PatchState } from "./types.js";
-import { Container } from "@earendil-works/pi-tui";
+import type { ThinkingEntry, NoticeEntry, PatchState } from "./types.js";
+import { Container, stripTerminalSequences } from "@earendil-works/pi-tui";
 import { AssistantMessageComponent } from "@earendil-works/pi-coding-agent";
 import { PATCH_KEY, LIVE_ASSISTANT_KEY, IS_STREAMING_COMP, PARENT_KEY } from "./constants.js";
 
@@ -229,6 +229,57 @@ export function maybeGroup(parent: any, component: any): void {
 	runtime.lastActiveGroup = group;
 }
 
+export function extractCacheMissNotice(component: any): string | null {
+	if (!component || typeof component !== "object") return null;
+	let text = "";
+	if (typeof component.build === "function") {
+		try {
+			text = String(component.build());
+		} catch {}
+	}
+	if (!text && typeof component.text === "string") {
+		text = component.text;
+	}
+	if (!text && typeof component.render === "function") {
+		try {
+			const rendered = component.render(120);
+			if (Array.isArray(rendered)) text = rendered.join("\n");
+		} catch {}
+	}
+	if (!text) return null;
+	const clean = stripTerminalSequences(text).trim();
+	if (/cache miss/i.test(clean) && /re-billed/i.test(clean)) {
+		return clean;
+	}
+	return null;
+}
+
+export function absorbCacheMissNotice(parent: any, text: string): boolean {
+	if (!runtime.lastChatContainer && parent) {
+		runtime.lastChatContainer = parent;
+	}
+	let group = findOpenGroup();
+	if (!group) {
+		group = openToolGroup();
+	}
+	if (!group && runtime.lastActiveGroup && runtime.groups.has(runtime.lastActiveGroup)) {
+		group = runtime.lastActiveGroup;
+	}
+	if (!group) return false;
+
+	const entry: NoticeEntry = {
+		kind: "notice",
+		id: runtime.noticeEntrySeq++,
+		noticeType: "cache_miss",
+		text,
+		owner: null,
+	};
+	group.addNotice(entry);
+	runtime.lastActiveGroup = group;
+	runtime.capturedTui?.requestRender?.();
+	return true;
+}
+
 export function installGrouping(): void {
 	const host = globalThis as any;
 	const prototypes: any[] = [Container.prototype];
@@ -256,6 +307,19 @@ export function installGrouping(): void {
 		};
 		state.installed = {
 			addChild: function (this: any, component: any) {
+				const cacheMissText = extractCacheMissNotice(component);
+				if (cacheMissText) {
+					const children = this.children;
+					if (Array.isArray(children) && children.length > 0) {
+						const lastChild = children[children.length - 1];
+						if (isSpacer(lastChild)) {
+							state.original.removeChild.call(this, lastChild);
+						}
+					}
+					if (absorbCacheMissNotice(this, cacheMissText)) {
+						return component;
+					}
+				}
 				const result = state.original.addChild.call(this, component);
 				if (component && typeof component === "object") {
 					// Remember where the current assistant message component lives so a

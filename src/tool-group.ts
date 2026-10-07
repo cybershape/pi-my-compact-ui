@@ -1,6 +1,6 @@
 /** Render collapsed groups in the original streaming order. */
 import { Container, visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
-import type { GroupEntry, ThinkingEntry } from "./types.js";
+import type { GroupEntry, NoticeEntry, ThinkingEntry } from "./types.js";
 import { absorbPreparingTool, rememberToolStart, toolElapsed } from "./streaming-tools.js";
 import { hideGroupedToolRender } from "./guards.js";
 import { PARENT_KEY, SPINNER, spinnerStart, SPINNER_MS, GROUP_PADDING_X, GROUP_PADDING_RIGHT } from "./constants.js";
@@ -45,6 +45,13 @@ export class ToolGroupComponent extends Container {
 		this.entries.push(entry);
 	}
 
+	addNotice(entry: NoticeEntry): void {
+		if (entry.owner && entry.owner !== this) return;
+		entry.owner = this;
+		this.entries.push(entry);
+		this.invalidate();
+	}
+
 	removeTool(tool: any): void {
 		const index = this.children.indexOf(tool);
 		if (index >= 0) this.children.splice(index, 1);
@@ -53,10 +60,11 @@ export class ToolGroupComponent extends Container {
 		if ((tool as any)?.[PARENT_KEY] === this) delete (tool as any)[PARENT_KEY];
 	}
 
-	/** Return only entries that should be displayed (tools, or thinking with non-empty text). */
+	/** Return only entries that should be displayed (tools, notices, or thinking with non-empty text). */
 	getVisibleEntries(): GroupEntry[] {
 		return this.entries.filter((entry) => {
 			if (entry.kind === "tool") return true;
+			if (entry.kind === "notice") return true;
 			if (entry.kind === "thinking") {
 				return entry.active || entry.text.trim().length > 0;
 			}
@@ -128,6 +136,30 @@ export class ToolGroupComponent extends Container {
 		return `${leftHeader}${" ".repeat(gap)}${right}`;
 	}
 
+	private noticeRow(rail: string, entry: NoticeEntry, width: number, isDim = false): string {
+		const theme = runtime.currentTheme;
+		const fg = (color: string, text: string) => theme?.fg?.(color, text) ?? text;
+		const prefix = rail ? fg("dim", rail) : "";
+		const iconColor = isDim ? "dim" : "warning";
+		const titleColor = isDim ? "dim" : "toolTitle";
+		const contentColor = "dim";
+
+		const icon = fg(iconColor, "!");
+		const title = fg(titleColor, "cache miss");
+
+		const content = entry.text
+			.replace(/^cache miss\s*/i, "")
+			.replace(/^[:\s]+/, "")
+			.replace(/:/g, "")
+			.trim();
+
+		const line = content
+			? `${prefix}${icon} ${title} ${fg(contentColor, content)}`
+			: `${prefix}${icon} ${title}`;
+
+		return truncateToWidth(line, width, fg("dim", "..."));
+	}
+
 	// One row per thinking run. The spinner marks the run that is still streaming;
 	// the completion mark is written as soon as the run ends. Token label is right-aligned.
 	private thinkingRow(
@@ -185,6 +217,9 @@ export class ToolGroupComponent extends Container {
 			const entry = visible[0]!;
 			if (entry.kind === "tool") {
 				return [this.toolRow("", entry.tool, frame, width)];
+			}
+			if (entry.kind === "notice") {
+				return [this.noticeRow("", entry, width)];
 			}
 			return [this.thinkingRow("", entry, width)];
 		}
@@ -244,7 +279,9 @@ export class ToolGroupComponent extends Container {
 			lines.push(
 				entry.kind === "thinking"
 					? this.thinkingRow(rail, entry, width, isDim)
-					: this.toolRow(rail, entry.tool, frame, width, isDim),
+					: entry.kind === "notice"
+						? this.noticeRow(rail, entry, width, isDim)
+						: this.toolRow(rail, entry.tool, frame, width, isDim),
 			);
 		}
 

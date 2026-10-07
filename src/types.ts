@@ -13,7 +13,15 @@ export type ThinkingEntry = {
 	owner: ToolGroupComponent | null;
 };
 
-export type GroupEntry = { kind: "tool"; tool: any } | ThinkingEntry;
+export type NoticeEntry = {
+	kind: "notice";
+	id: number;
+	noticeType: "cache_miss";
+	text: string;
+	owner: ToolGroupComponent | null;
+};
+
+export type GroupEntry = { kind: "tool"; tool: any } | ThinkingEntry | NoticeEntry;
 
 export type ToolStatus = "pending" | "success" | "error";
 

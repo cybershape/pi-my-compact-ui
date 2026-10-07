@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { Container, visibleWidth, stripTerminalSequences } from "@earendil-works/pi-tui";
+import { Container, Spacer, visibleWidth, stripTerminalSequences } from "@earendil-works/pi-tui";
 import { createRuntimeState, runtime } from "../src/state.js";
 import { ToolGroupComponent } from "../src/tool-group.js";
 import { createThinkingEntry, finalizeActiveThinking, refreshSealedThinkingTokens, updateActiveThinkingTokens } from "../src/thinking.js";
@@ -10,6 +10,7 @@ import { DetailModalComponent, InspectSelectorModal, openInspectSelectorModal, c
 import type { ThinkingEntry } from "../src/types.js";
 import { config, DEFAULT_CONFIG } from "../src/config.js";
 import { initTheme } from "@earendil-works/pi-coding-agent";
+import { extractCacheMissNotice, installGrouping } from "../src/grouping.js";
 
 initTheme("dark", false);
 const originalConfig = { ...config };
@@ -520,4 +521,79 @@ test("在选择器中按回车弹出详情层时保留选择器层，关闭详�
 	assert.equal(runtime.activeSelectorHandle, null);
 
 	runtime.capturedTui = null;
+});
+
+test("cache miss 通知识别与提取，不误判普通文本", () => {
+	assert.equal(
+		extractCacheMissNotice({ build: () => "\x1b[33mCache miss: 102k tokens re-billed (~$0.15)\x1b[39m" }),
+		"Cache miss: 102k tokens re-billed (~$0.15)",
+	);
+	assert.equal(
+		extractCacheMissNotice({ text: "Cache miss after model switch: 128k tokens re-billed" }),
+		"Cache miss after model switch: 128k tokens re-billed",
+	);
+	assert.equal(extractCacheMissNotice({ build: () => "Regular status message" }), null);
+	assert.equal(extractCacheMissNotice(null), null);
+});
+
+test("chatContainer 拦截 cache miss：清除前置 Spacer，并将 notice 吸收至 group", () => {
+	installGrouping();
+	const container = new Container();
+	runtime.lastChatContainer = container;
+
+	const group = new ToolGroupComponent();
+	container.addChild(group);
+	runtime.groups.add(group);
+	runtime.lastActiveGroup = group;
+
+	const spacer = new Spacer(1);
+	container.addChild(spacer);
+	assert.ok(container.children.includes(spacer));
+
+	const cacheMissComp: any = {
+		build: () => "\x1b[33mCache miss: 102k tokens re-billed\x1b[39m",
+	};
+
+	container.addChild(cacheMissComp);
+
+	// 1. 前置 Spacer 应被清理
+	assert.ok(!container.children.includes(spacer));
+	// 2. 原生 ThemedText 不应进入 container
+	assert.ok(!container.children.includes(cacheMissComp as any));
+	// 3. notice 应成功加入 group
+	const entries = group.getVisibleEntries();
+	assert.equal(entries.length, 1);
+	assert.equal(entries[0]!.kind, "notice");
+	assert.equal((entries[0] as any).text, "Cache miss: 102k tokens re-billed");
+
+	// 4. Group 渲染应带有黄色的感叹号 (!)、小写白色 cache miss 且无冒号
+	const rendered = group.render(80).join("\n");
+	assert.ok(rendered.includes("!"));
+	assert.ok(rendered.includes("cache miss"));
+	assert.ok(!rendered.includes("Cache miss:"));
+	assert.ok(rendered.includes("102k tokens re-billed"));
+});
+
+test("cache miss notice 可以在检查选择器和详情弹窗中正常查看", () => {
+	const group = new ToolGroupComponent();
+	group.addNotice({
+		kind: "notice",
+		id: 1,
+		noticeType: "cache_miss",
+		text: "Cache miss: 111k tokens re-billed",
+		owner: null,
+	});
+	runtime.groups.add(group);
+
+	const selector = new InspectSelectorModal();
+	const selectorText = selector.render(80).join("\n");
+	assert.ok(selectorText.includes("!"));
+	assert.ok(selectorText.includes("cache miss"));
+	assert.ok(selectorText.includes("111k tokens re-billed"));
+
+	const modal = new DetailModalComponent(group.entries[0]!);
+	const modalText = modal.render(80).join("\n");
+	assert.ok(modalText.includes("!"));
+	assert.ok(modalText.includes("cache miss"));
+	assert.ok(modalText.includes("111k tokens re-billed"));
 });

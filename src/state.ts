@@ -12,6 +12,7 @@ export interface RuntimeState {
 	activeThinkingBlocks: Map<number, string>;
 	unattachedThinking: ThinkingEntry[];
 	thinkingEntrySeq: number;
+	noticeEntrySeq: number;
 	handledTextIndexes: Set<number>;
 	sealedThinkingIndexes: Set<number>;
 	pendingTextSeal: boolean;
@@ -48,6 +49,7 @@ export function createRuntimeState(): RuntimeState {
 		activeThinkingBlocks: new Map<number, string>(),
 		unattachedThinking: [],
 		thinkingEntrySeq: 0,
+		noticeEntrySeq: 0,
 		handledTextIndexes: new Set<number>(),
 		sealedThinkingIndexes: new Set<number>(),
 		pendingTextSeal: false,
