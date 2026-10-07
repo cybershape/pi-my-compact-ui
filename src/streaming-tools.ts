@@ -10,9 +10,7 @@ import { formatToolDuration, locateStreamingToolCall, streamingToolArgs } from "
 export { formatToolDuration } from "./helpers.js";
 
 export function toolElapsed(tool: any): string {
-	if (typeof tool?._elapsedDuration === "number") {
-		return formatToolDuration(tool._elapsedDuration);
-	}
+	// Final timing must override any duration cached before execution ended.
 	const knownDuration = runtime.toolDurations.get(tool.toolCallId);
 	if (knownDuration !== undefined) {
 		tool._elapsedDuration = knownDuration;
@@ -24,7 +22,11 @@ export function toolElapsed(tool: any): string {
 		tool._elapsedDuration = dur;
 		return formatToolDuration(dur);
 	}
-	if (tool?.result) {
+	if (tool?.isPartial !== true && typeof tool?._elapsedDuration === "number") {
+		return formatToolDuration(tool._elapsedDuration);
+	}
+	// Streaming output is a result too, but must not freeze the running clock.
+	if (tool?.result && tool.isPartial !== true) {
 		const resultTs = Number(tool.result?.timestamp);
 		const start = runtime.toolStarts.get(tool.toolCallId);
 		if (start && resultTs && resultTs >= start) {

@@ -350,6 +350,81 @@ test("同名并行工具不能通过名称猜测匹配，ID 匹配才吸收", ()
 	assert.equal(runtime.preparingByIndex.size, 1);
 });
 
+test("partial bash results keep elapsed time running until execution ends", (t) => {
+	let now = 1500;
+	t.mock.method(Date, "now", () => now);
+	const call = {
+		...tool("streaming-bash"),
+		isPartial: true,
+		_elapsedDuration: undefined as number | undefined,
+		_groupEndAt: undefined as number | undefined,
+	};
+	runtime.toolStarts.set(call.toolCallId, 1000);
+	call.result = { content: [] };
+	assert.equal(toolElapsed(call), "500ms");
+	assert.equal(call._elapsedDuration, undefined);
+	now = 3500;
+	call.result = { content: [{ type: "text", text: "output" }], timestamp: 2000 };
+	assert.equal(toolElapsed(call), "2.50s");
+	assert.equal(call._elapsedDuration, undefined);
+	const group = new ToolGroupComponent();
+	group.addTool(call);
+	assert.ok(group.render(80).join("\n").includes("(2.50s)"));
+	now = 5000;
+	runtime.toolDurations.set(call.toolCallId, 4);
+	call._groupEndAt = now;
+	// The end event records timing before Pi replaces the last partial result.
+	assert.equal(toolElapsed(call), "4.00s");
+	call.isPartial = false;
+	call.result = { content: [{ type: "text", text: "finished" }] };
+	now = 10000;
+	assert.equal(toolElapsed(call), "4.00s");
+	assert.ok(group.render(80).join("\n").includes("(4.00s)"));
+	assert.equal(runtime.toolStarts.get(call.toolCallId), 1000);
+});
+
+test("final recorded duration overrides a stale zero cache", (t) => {
+	t.mock.method(Date, "now", () => 5000);
+	const call = { ...tool("stale-cache", { content: [] }), isPartial: true, _elapsedDuration: 0 };
+	runtime.toolStarts.set(call.toolCallId, 1000);
+	assert.equal(toolElapsed(call), "4.00s");
+	runtime.toolDurations.set(call.toolCallId, 8);
+	assert.equal(toolElapsed(call), "8.00s");
+	assert.equal(call._elapsedDuration, 8);
+	call.isPartial = false;
+	assert.equal(toolElapsed(call), "8.00s");
+});
+
+test("recorded end time overrides a stale cache without a duration entry", () => {
+	const call = { ...tool("end-time", { content: [] }), _elapsedDuration: 0, _groupEndAt: 3250 };
+	runtime.toolStarts.set(call.toolCallId, 1000);
+	assert.equal(toolElapsed(call), "2.25s");
+	assert.equal(call._elapsedDuration, 2.25);
+});
+
+test("late final timing replaces the fallback cache for completed results", () => {
+	const call = { ...tool("late-timing", { content: [] }), isPartial: false };
+	assert.equal(toolElapsed(call), "0ms");
+	runtime.toolDurations.set(call.toolCallId, 8);
+	assert.equal(toolElapsed(call), "8.00s");
+});
+
+test("final result timestamps still freeze elapsed time without end-event metadata", (t) => {
+	let now = 4000;
+	t.mock.method(Date, "now", () => now);
+	const call = { ...tool("timestamp-fallback", { content: [], timestamp: 3250 }), isPartial: false };
+	runtime.toolStarts.set(call.toolCallId, 1000);
+	assert.equal(toolElapsed(call), "2.25s");
+	now = 9000;
+	assert.equal(toolElapsed(call), "2.25s");
+});
+
+test("partial results without a start time do not cache zero", () => {
+	const call = { ...tool("missing-start", { content: [] }), isPartial: true, _elapsedDuration: undefined as number | undefined };
+	assert.equal(toolElapsed(call), "0ms");
+	assert.equal(call._elapsedDuration, undefined);
+});
+
 test("工具完成后耗时冻结在结束时间", () => {
 	runtime.toolStarts.set("a", 1000);
 	assert.equal(toolElapsed({ toolCallId: "a", result: {}, _groupEndAt: 3250 }), "2.25s");
