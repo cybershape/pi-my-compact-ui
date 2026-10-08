@@ -9,7 +9,7 @@ import { PARENT_KEY } from "../src/constants.js";
 import { DetailModalComponent, InspectSelectorModal, openInspectSelectorModal, closeDetailModal, closeInspectSelectorModal } from "../src/modals.js";
 import type { ThinkingEntry } from "../src/types.js";
 import { config, DEFAULT_CONFIG } from "../src/config.js";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { initTheme, AssistantMessageComponent } from "@earendil-works/pi-coding-agent";
 import { extractCacheMissNotice, installGrouping } from "../src/grouping.js";
 import { toolStatus } from "../src/helpers.js";
 
@@ -726,6 +726,11 @@ test("cache miss 通知识别与提取，不误判普通文本", () => {
 		"Cache miss after model switch: 128k tokens re-billed",
 	);
 	assert.equal(extractCacheMissNotice({ build: () => "Regular status message" }), null);
+	// Diff or random code with cache miss and re-billed in different places should not be recognized
+	assert.equal(
+		extractCacheMissNotice({ text: "const a = 'cache miss';\n// later\nconst b = 're-billed';" }),
+		null,
+	);
 	assert.equal(extractCacheMissNotice(null), null);
 });
 
@@ -824,3 +829,52 @@ test("恢复会话时未完成（被中断或强退）的工具耗时冻结在 0
 	assert.ok(rows.includes("(0ms)"));
 	assert.ok(!rows.includes("tool calling..."));
 });
+
+test("ToolGroupComponent.invalidate 不级联触发子工具的 invalidate", () => {
+	const group = new ToolGroupComponent();
+	let toolInvalidated = 0;
+	const dummyTool = {
+		toolCallId: "tool-1",
+		toolName: "bash",
+		invalidate() {
+			toolInvalidated++;
+		},
+	};
+	group.addTool(dummyTool);
+	group.invalidate();
+	assert.equal(toolInvalidated, 0);
+});
+
+test("assistant 错误消息（无工具调用）封存前面的活跃工具组且不颠倒顺序", () => {
+	installGrouping();
+	const chat = new Container();
+	runtime.lastChatContainer = chat;
+
+	const group = new ToolGroupComponent();
+	chat.addChild(group);
+	runtime.groups.add(group);
+	runtime.lastActiveGroup = group;
+	group.addTool({ toolCallId: "t1", toolName: "bash", result: { isError: false } });
+
+	assert.equal(group.sealed, false);
+
+	// Error assistant message arrives
+	const errorAssistant = new AssistantMessageComponent({
+		role: "assistant",
+		content: [],
+		stopReason: "error",
+		errorMessage: "Connection error.",
+	} as any);
+
+	chat.addChild(errorAssistant);
+
+	// 1. Group before error should be sealed
+	assert.equal(group.sealed, true);
+	// 2. Group should stay BEFORE errorAssistant in children order
+	const groupIdx = chat.children.indexOf(group);
+	const errIdx = chat.children.indexOf(errorAssistant);
+	assert.ok(groupIdx >= 0);
+	assert.ok(errIdx >= 0);
+	assert.ok(groupIdx < errIdx);
+});
+

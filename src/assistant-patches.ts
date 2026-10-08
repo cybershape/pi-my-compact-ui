@@ -347,6 +347,7 @@ export function anchorGroupBeforeCurrentText(group: ToolGroupComponent, ordinal:
 		removeGroupFromContainer(contentContainer, replaced);
 		replaced.anchored = false;
 		runtime.groupAnchors.delete(replaced);
+		runtime.groups.delete(replaced);
 	}
 	state.anchors.set(ordinal, group);
 	runtime.groupAnchors.set(group, { container: contentContainer, ordinal });

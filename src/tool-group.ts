@@ -26,6 +26,12 @@ export class ToolGroupComponent extends Container {
 	/** Keep Pi's expansion API compatible without expanding compact groups. */
 	setExpanded(_expanded: boolean): void {}
 
+	override invalidate(): void {
+		// ToolGroupComponent renders its own compact summary and never renders child ToolExecutionComponents.
+		// Avoid cascading invalidate() down to children, which forces all historical tools to redundantly
+		// re-parse and rebuild their displays.
+	}
+
 	addTool(tool: any): void {
 		absorbPreparingTool(tool);
 		hideGroupedToolRender(tool);
@@ -112,7 +118,13 @@ export class ToolGroupComponent extends Container {
 	/** True while this group should keep its spinner animating. */
 	needsAnimation(): boolean {
 		if (this.sealed) return false;
-		return this.hasVisibleEntries() && (this.hasPending() || this.hasActiveThinking() || !!this.workPhaseLabel() || !this.hasTools());
+		return (
+			this.hasVisibleEntries() &&
+			(this.hasPending() ||
+				this.hasActiveThinking() ||
+				Boolean(this.workPhaseLabel()) ||
+				(!this.hasTools() && runtime.agentWorkPhase !== null))
+		);
 	}
 
 	private iconFor(tool: any, frame: string): string {

@@ -240,15 +240,9 @@ export function extractCacheMissNotice(component: any): string | null {
 	if (!text && typeof component.text === "string") {
 		text = component.text;
 	}
-	if (!text && typeof component.render === "function") {
-		try {
-			const rendered = component.render(120);
-			if (Array.isArray(rendered)) text = rendered.join("\n");
-		} catch {}
-	}
 	if (!text) return null;
 	const clean = stripTerminalSequences(text).trim();
-	if (/cache miss/i.test(clean) && /re-billed/i.test(clean)) {
+	if (/^cache miss(?: after [^:]+)?:.*tokens re-billed/i.test(clean)) {
 		return clean;
 	}
 	return null;
@@ -307,7 +301,8 @@ export function installGrouping(): void {
 		};
 		state.installed = {
 			addChild: function (this: any, component: any) {
-				const cacheMissText = extractCacheMissNotice(component);
+				const isChat = !runtime.lastChatContainer || this === runtime.lastChatContainer;
+				const cacheMissText = isChat ? extractCacheMissNotice(component) : null;
 				if (cacheMissText) {
 					const children = this.children;
 					if (Array.isArray(children) && children.length > 0) {
@@ -334,10 +329,29 @@ export function installGrouping(): void {
 						runtime.lastChatContainer = this;
 						runtime.lastStreamingComp = assistant;
 						assistant[IS_STREAMING_COMP] = streaming;
+
+						const lastMsg = assistant.lastMessage;
+						const isError =
+							lastMsg?.stopReason === "error" ||
+							lastMsg?.stopReason === "aborted" ||
+							Boolean(lastMsg?.errorMessage);
+						const hasTools = Boolean(
+							lastMsg?.content?.some((item: any) => item?.type === "toolCall"),
+						);
+
 						// Keep one open block across assistant messages until visible text.
 						// A rebuilt message that already has text is that boundary.
 						if (assistantHasVisibleText(assistant)) {
 							sealOpenGroupAtAssistantText(assistant);
+						} else if (isError && !hasTools) {
+							// An assistant error message without tool calls: seal the preceding
+							// tool group so it stays before the error and is not dragged below it.
+							const open = findOpenGroup();
+							if (open) {
+								open.sealed = true;
+								finalizeActiveThinking();
+								open.invalidate();
+							}
 						} else {
 							const open = findOpenGroup();
 							if (open) placeGroupAfter(this, assistant, open);
