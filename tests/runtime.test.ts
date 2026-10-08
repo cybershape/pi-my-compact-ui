@@ -11,6 +11,7 @@ import type { ThinkingEntry } from "../src/types.js";
 import { config, DEFAULT_CONFIG } from "../src/config.js";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { extractCacheMissNotice, installGrouping } from "../src/grouping.js";
+import { toolStatus } from "../src/helpers.js";
 
 initTheme("dark", false);
 const originalConfig = { ...config };
@@ -788,4 +789,38 @@ test("cache miss notice 可以在检查选择器和详情弹窗中正常查看",
 	assert.ok(modalText.includes("!"));
 	assert.ok(modalText.includes("cache miss"));
 	assert.ok(modalText.includes("111k tokens re-billed"));
+});
+
+test("恢复会话时未完成（被中断或强退）的工具耗时冻结在 0ms 且不再 pending 跑动", () => {
+	const entries = [
+		{
+			type: "message",
+			message: {
+				role: "assistant",
+				timestamp: 5000,
+				content: [{ type: "toolCall", id: "call_unfinished", name: "bash", arguments: { command: "sleep 100" } }],
+			},
+		},
+	];
+
+	loadSessionToolTimings(entries);
+	assert.equal(runtime.toolStarts.get("call_unfinished"), 5000);
+	assert.equal(runtime.toolDurations.get("call_unfinished"), 0);
+	assert.ok(runtime.interruptedToolCallIds.has("call_unfinished"));
+
+	const unfinishedTool = { toolCallId: "call_unfinished", toolName: "bash" };
+	const group = new ToolGroupComponent();
+	group.addTool(unfinishedTool);
+	runtime.groups.add(group);
+
+	assert.equal(toolStatus(unfinishedTool), "error");
+	assert.equal(toolElapsed(unfinishedTool), "0ms");
+	assert.equal(toolElapsed(unfinishedTool), "0ms");
+	assert.equal(group.hasPending(), false);
+	assert.equal(group.needsAnimation(), false);
+
+	const rows = stripTerminalSequences(group.render(80).join("\n"));
+	assert.ok(rows.includes("✗ bash"));
+	assert.ok(rows.includes("(0ms)"));
+	assert.ok(!rows.includes("tool calling..."));
 });

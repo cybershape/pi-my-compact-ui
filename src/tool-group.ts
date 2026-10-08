@@ -29,8 +29,12 @@ export class ToolGroupComponent extends Container {
 	addTool(tool: any): void {
 		absorbPreparingTool(tool);
 		hideGroupedToolRender(tool);
+		const id = String(tool?.toolCallId ?? "");
+		if (runtime.interruptedToolCallIds.has(id)) {
+			(tool as any)._interrupted = true;
+		}
 		if (!tool?.result && !runtime.toolDurations.has(tool?.toolCallId)) {
-			rememberToolStart(String(tool?.toolCallId ?? ""));
+			rememberToolStart(id);
 		}
 		this.children.push(tool);
 		if ((tool as any)._groupedAt === undefined) (tool as any)._groupedAt = Date.now();

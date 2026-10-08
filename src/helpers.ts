@@ -2,6 +2,7 @@
 import { homedir } from "os";
 import type { ThinkingEntry, ToolStatus } from "./types.js";
 import { isKeyRelease, parseKey, matchesKey } from "@earendil-works/pi-tui";
+import { PARENT_KEY } from "./constants.js";
 
 export function shortenPath(path: string): string {
 	const home = homedir();
@@ -65,7 +66,9 @@ export function toolSummary(name: string, args: any): { name: string; content: s
 }
 
 export function toolStatus(tool: any): ToolStatus {
-	if (tool?.result?.isError) return "error";
+	if (tool?.result?.isError || tool?._interrupted === true) return "error";
+	const group = tool?.owner ?? tool?.[PARENT_KEY];
+	if (group?.sealed && !tool?.result) return "error";
 	if (tool?.isPartial === true || (tool?.executionStarted && !tool?.result)) return "pending";
 	return tool?.result ? "success" : "pending";
 }

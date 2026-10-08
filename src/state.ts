@@ -24,6 +24,7 @@ export interface RuntimeState {
 	lastChatContainer: any;
 	toolStarts: Map<string, number>;
 	toolDurations: Map<string, number>;
+	interruptedToolCallIds: Set<string>;
 	turnStartMs: number;
 	/** Observable work between streamed thinking and tool execution. Null when inactive. */
 	agentWorkPhase: "working" | "waiting-response" | "waiting-output" | null;
@@ -63,6 +64,7 @@ export function createRuntimeState(): RuntimeState {
 		lastChatContainer: null,
 		toolStarts: new Map<string, number>(),
 		toolDurations: new Map<string, number>(),
+		interruptedToolCallIds: new Set<string>(),
 		turnStartMs: 0,
 		agentWorkPhase: null,
 		preparingByIndex: new Map<number, PreparingTool>(),

@@ -84,12 +84,17 @@ export default function (pi: ExtensionAPI) {
 
 		// Replaying history builds groups that belong to finished past turns.
 		// Seal them once history replay finishes so they do not animate or tick.
-		queueMicrotask(() => {
+		const sealHistoricalGroups = () => {
 			for (const g of runtime.groups) {
 				g.sealed = true;
 				for (const t of g.children as any[]) {
-					if (t.result && t._groupEndAt === undefined) {
+					if (t._groupEndAt === undefined) {
 						t._groupEndAt = Date.now();
+					}
+					if (!t.result && !runtime.toolDurations.has(t.toolCallId)) {
+						runtime.toolDurations.set(t.toolCallId, 0);
+						runtime.interruptedToolCallIds.add(t.toolCallId);
+						t._interrupted = true;
 					}
 				}
 				g.invalidate();
@@ -100,7 +105,10 @@ export default function (pi: ExtensionAPI) {
 				runtime.animTimer = null;
 			}
 			runtime.capturedTui?.requestRender?.();
-		});
+		};
+
+		queueMicrotask(sealHistoricalGroups);
+		setTimeout(sealHistoricalGroups, 0);
 	});
 
 	pi.on("session_shutdown", async () => {
@@ -291,6 +299,17 @@ export default function (pi: ExtensionAPI) {
 			runtime.lastActiveGroup.sealed = true;
 			finalizeActiveThinking();
 			runtime.lastActiveGroup.invalidate();
+		}
+		for (const g of runtime.groups) {
+			for (const t of g.children as any[]) {
+				if (t._groupEndAt === undefined && !runtime.toolDurations.has(t.toolCallId)) {
+					t._groupEndAt = Date.now();
+				}
+				if (!t.result && !runtime.toolDurations.has(t.toolCallId)) {
+					runtime.interruptedToolCallIds.add(t.toolCallId);
+					t._interrupted = true;
+				}
+			}
 		}
 		for (const g of [...runtime.groups]) {
 			if (!g.hasVisibleEntries()) {

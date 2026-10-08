@@ -37,6 +37,11 @@ export function toolElapsed(tool: any): string {
 		tool._elapsedDuration = 0;
 		return "0ms";
 	}
+	const group = tool?.owner ?? tool?.[PARENT_KEY];
+	if (tool?._interrupted === true || group?.sealed || runtime.interruptedToolCallIds.has(tool?.toolCallId)) {
+		tool._elapsedDuration = 0;
+		return "0ms";
+	}
 	const start = runtime.toolStarts.get(tool.toolCallId);
 	if (start !== undefined) {
 		return formatToolDuration(Math.max(0, (Date.now() - start) / 1000));
@@ -51,6 +56,8 @@ export function rememberToolStart(toolCallId: string): void {
 
 export function loadSessionToolTimings(entries: readonly any[]): void {
 	if (!Array.isArray(entries)) return;
+	const sessionToolCalls = new Set<string>();
+	const sessionToolResults = new Set<string>();
 	for (const entry of entries) {
 		if (entry?.type === "message" && entry.message) {
 			const msg = entry.message;
@@ -58,16 +65,26 @@ export function loadSessionToolTimings(entries: readonly any[]): void {
 				const startTime = Number(msg.timestamp) || (entry.timestamp ? new Date(entry.timestamp).getTime() : 0);
 				for (const block of msg.content) {
 					if (block.type === "toolCall" && block.id) {
+						sessionToolCalls.add(block.id);
 						if (startTime > 0) runtime.toolStarts.set(block.id, startTime);
 					}
 				}
 			} else if (msg.role === "toolResult" && msg.toolCallId) {
+				sessionToolResults.add(msg.toolCallId);
 				const endTime = Number(msg.timestamp) || (entry.timestamp ? new Date(entry.timestamp).getTime() : 0);
 				const startTime = runtime.toolStarts.get(msg.toolCallId);
 				if (startTime && endTime >= startTime) {
 					runtime.toolDurations.set(msg.toolCallId, (endTime - startTime) / 1000);
 				}
 			}
+		}
+	}
+	for (const id of sessionToolCalls) {
+		if (!sessionToolResults.has(id)) {
+			if (!runtime.toolDurations.has(id)) {
+				runtime.toolDurations.set(id, 0);
+			}
+			runtime.interruptedToolCallIds.add(id);
 		}
 	}
 }

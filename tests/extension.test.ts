@@ -357,3 +357,28 @@ test("热重载替换分组补丁而不是叠加，不重复显示历史思考",
 	assert.equal(content.children.filter((child) => child instanceof ToolGroupComponent).length, 1);
 	assert.equal(runtime.groups.size, 1);
 });
+
+test("未执行完的工具在 agent_end 中断时被标记中断且耗时被固化", async () => {
+	await emit("agent_start");
+	await emit("message_start", { message: { role: "assistant" } });
+	mountLiveAssistant();
+	const blocks = [{ type: "toolCall", id: "interrupted-call", name: "bash", arguments: { command: "sleep 10" } }];
+	await update(blocks, "toolcall_start", 0);
+	const group = runtime.lastActiveGroup!;
+	const call = { toolName: "bash", toolCallId: "interrupted-call", args: { command: "sleep 10" }, result: undefined as unknown };
+	group.addTool(call);
+	await update(blocks, "toolcall_end", 0);
+	await emit("tool_execution_start", { toolCallId: "interrupted-call" });
+	assert.ok(group.hasPending());
+
+	// 中断触发 agent_end
+	await emit("agent_end");
+	assert.equal(group.sealed, true);
+	assert.equal(group.hasPending(), false);
+	assert.equal(group.needsAnimation(), false);
+	assert.ok(runtime.interruptedToolCallIds.has("interrupted-call"));
+	const tool = (group.children as any[]).find((c) => c.toolCallId === "interrupted-call");
+	assert.ok(tool);
+	assert.equal(tool._interrupted, true);
+	assert.ok(tool._groupEndAt !== undefined);
+});
