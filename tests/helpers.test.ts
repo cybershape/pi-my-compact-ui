@@ -27,6 +27,8 @@ test("路径与工具摘要保留默认值和参数优先级", () => {
 		["grep", { pattern: "TODO", path: "src" }, "TODO in src"],
 		["web_search", { query: "a\n b" }, "a b"],
 		["subagent", { agent: "review", task: "ignored" }, "review"],
+		["codemode", { code: "await\n tools.bash()" }, "await tools.bash()"],
+		["codemode", {}, "..."],
 		["custom", { path: "p", query: "q" }, "p"],
 		["custom", { url: "https://example.com" }, "https://example.com"],
 		["custom", undefined, "..."],
@@ -65,6 +67,7 @@ test("流式工具参数优先使用结构化参数，缺失时回退到部分�
 	assert.equal(streamingToolArgs({ arguments: args, partialJson: "ignored" }), args);
 	assert.deepEqual(streamingToolArgs({ name: "bash", partialJson: " echo" }), { command: "echo" });
 	assert.deepEqual(streamingToolArgs({ name: "read", partialArgs: " src/a" }), { path: "src/a" });
+	assert.deepEqual(streamingToolArgs({ name: "codemode", partialJson: " await tools" }), { code: "await tools" });
 	assert.deepEqual(streamingToolArgs({ name: "custom", partialJson: "query" }), { query: "query" });
 	assert.deepEqual(streamingToolArgs(undefined), {});
 });

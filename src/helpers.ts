@@ -58,6 +58,8 @@ export function toolSummary(name: string, args: any): { name: string; content: s
 			return { name: "web_search", content: oneLine(args?.query || "...") };
 		case "subagent":
 			return { name: "subagent", content: oneLine(args?.agent || args?.task || "...") };
+		case "codemode":
+			return { name: "codemode", content: oneLine(args?.code || "...") };
 		default: {
 			const preferred = args?.path ?? args?.query ?? args?.name ?? args?.description ?? args?.url;
 			return { name, content: oneLine(preferred ?? "...") };
@@ -81,6 +83,7 @@ export function streamingToolArgs(block: any): any {
 	const name = String(block?.name || "");
 	if (name === "bash" || name === "powershell") return { command: partial };
 	if (name === "read" || name === "write" || name === "edit" || name === "ls") return { path: partial };
+	if (name === "codemode") return { code: partial };
 	return { query: partial };
 }
 
